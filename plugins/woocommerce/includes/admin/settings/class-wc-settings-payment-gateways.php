@@ -30,6 +30,11 @@ class WC_Settings_Payment_Gateways extends WC_Settings_Page {
 	const CHEQUE_SECTION_NAME  = 'cheque';  // Cheque payments.
 
 	/**
+	 * Section listing the individual payment methods registered for the Checkout Block.
+	 */
+	const PAYMENT_METHODS_SECTION_NAME = 'payment-methods';
+
+	/**
 	 * Setting page icon.
 	 *
 	 * @var string
@@ -177,6 +182,7 @@ class WC_Settings_Payment_Gateways extends WC_Settings_Page {
 		$reactified_sections = array(
 			self::MAIN_SECTION_NAME,
 			self::OFFLINE_SECTION_NAME,
+			self::PAYMENT_METHODS_SECTION_NAME,
 		);
 
 		// These sections are optional and can be modified by plugins or themes.

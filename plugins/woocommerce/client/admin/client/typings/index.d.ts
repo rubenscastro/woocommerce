@@ -7,6 +7,22 @@ declare module '@woocommerce/settings' {
 			typeof val !== 'undefined' ? val : fb
 	): T;
 }
+declare module '@woocommerce/blocks-registry' {
+	// The Checkout Block payment method registry. The package is a path alias inside the
+	// blocks client, so only the surface used here is declared.
+	export type RegisteredPaymentMethod = {
+		name: string;
+		ariaLabel: string;
+		// Defaults to `name` when the registration omits it.
+		paymentMethodId?: string;
+		// A React element, rendered by the Checkout Block with a `components` prop.
+		label: unknown;
+	};
+	export declare function getPaymentMethods(): Record<
+		string,
+		RegisteredPaymentMethod
+	>;
+}
 declare module '@wordpress/keyboard-shortcuts' {
 	// The package ships no type declarations; declare the minimal surface in use.
 	export type ShortcutKeyCombination = {
