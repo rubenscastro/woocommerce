@@ -10,6 +10,9 @@ declare module '@woocommerce/settings' {
 declare module '@woocommerce/blocks-registry' {
 	// The Checkout Block payment method registry. The package is a path alias inside the
 	// blocks client, so only the surface used here is declared.
+	export type RegisteredPaymentMethodIcon =
+		| { id: string; src: string | null; alt: string }
+		| string;
 	export type RegisteredPaymentMethod = {
 		name: string;
 		ariaLabel: string;
@@ -17,6 +20,9 @@ declare module '@woocommerce/blocks-registry' {
 		paymentMethodId?: string;
 		// A React element, rendered by the Checkout Block with a `components` prop.
 		label: unknown;
+		// Documented as the card brands the method supports. Entries are either a descriptor or a
+		// bare string naming an icon the Checkout Block resolves itself.
+		icons?: RegisteredPaymentMethodIcon[] | null;
 	};
 	export declare function getPaymentMethods(): Record<
 		string,
