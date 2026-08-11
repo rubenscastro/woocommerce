@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Add a Payment methods section under WooCommerce > Settings > Payments listing the individual payment methods registered for the Checkout Block.
