@@ -48,7 +48,7 @@ class StripeOptimizedCheckoutAdapter {
 	 * it belongs to. Returns an empty array when Stripe is absent or cannot be inspected, in which
 	 * case the page falls back to listing every registered method flat.
 	 *
-	 * @return array<string, array{childGatewayIds: string[], showChildren: bool}>
+	 * @return array<string, array{childGatewayIds: string[], showChildren: bool, optimizedCheckout: bool, settingsUrl: string}>
 	 */
 	public function get_grouped_providers(): array {
 		try {
@@ -65,10 +65,14 @@ class StripeOptimizedCheckoutAdapter {
 				return array();
 			}
 
+			$optimized_checkout = $this->is_optimized_checkout_active( $parent_gateway );
+
 			return array(
 				self::PARENT_GATEWAY_ID => array(
-					'childGatewayIds' => $child_gateway_ids,
-					'showChildren'    => ! $this->is_optimized_checkout_active( $parent_gateway ),
+					'childGatewayIds'   => $child_gateway_ids,
+					'showChildren'      => ! $optimized_checkout,
+					'optimizedCheckout' => $optimized_checkout,
+					'settingsUrl'       => admin_url( 'admin.php?page=wc-settings&tab=checkout&section=' . self::PARENT_GATEWAY_ID ),
 				),
 			);
 		} catch ( Throwable $e ) {

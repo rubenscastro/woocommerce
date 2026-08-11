@@ -1,0 +1,171 @@
+// This screen reuses the Payment providers list wholesale — container, header, row and hover
+// styles all come from `settings-payments-main.scss` and `payment-gateway-list.scss` via the
+// shared class names. Only what is genuinely new to this screen lives here.
+// Values come from the design system tokens in @wordpress/theme, which settings-embed already
+// loads. There is no `dimension-size` family, so the few fixed pixel sizes below are the ones
+// with no token to point at.
+
+.settings-payments-main__container.settings-payments-methods {
+	// Providers rows top-align because their content varies in height — descriptions, badge rows,
+	// stacked buttons. Every row here is a single line, so the content centres and the row is
+	// tightened to a single padding step around the 40px logo.
+	.woocommerce-list__item-inner {
+		align-items: center;
+		padding: var(--wpds-dimension-padding-lg) 0;
+	}
+
+	// Providers reserves 48px on the trailing column for the action buttons and the ellipsis menu.
+	// These rows carry neither, and the reserve makes the content box taller than the 40px logo,
+	// so the gap between the row edge and the logo came out as the padding plus the leftover.
+	.woocommerce-list__item-after {
+		min-height: 0;
+	}
+
+	// Heading LG. The design system has no composite heading token, so the role is spelled out
+	// from the parts it is made of, the same way settings-ui.scss consumes the typography scale.
+	// The hover selector is here because payment-gateway-list.scss repaints the title on hover;
+	// without it the colour would drop back to a raw value whenever the pointer is over a row.
+	.settings-payment-gateways__header-title,
+	.woocommerce-list__item-title,
+	.woocommerce-list__item:hover .woocommerce-list__item-title {
+		font-family: var(--wpds-typography-font-family-heading);
+		font-size: var(--wpds-typography-font-size-lg);
+		line-height: var(--wpds-typography-line-height-lg);
+		font-weight: var(--wpds-typography-font-weight-medium);
+		color: var(--wpds-color-foreground-content-neutral);
+	}
+
+	// A registered label is arbitrary third-party markup — PayPal Payments, for one, renders a
+	// bare <div dangerouslySetInnerHTML> that picks up a blue from somewhere outside this
+	// stylesheet. Whatever an extension ships, the name column reads as one column, so anything
+	// nested in the title inherits the title's colour rather than bringing its own.
+	.woocommerce-list__item-title * {
+		color: inherit;
+	}
+
+	// Some labels also carry their own inline logo. Until the logo column is settled these would
+	// each render at their natural size and set the row height; cap them to the line box.
+	.woocommerce-list__item-title img,
+	.woocommerce-list__item-title svg {
+		max-height: var(--wpds-typography-line-height-lg);
+		width: auto;
+	}
+
+	// A row that carries anything below it — nested methods, or the Optimized Checkout notice —
+	// reads as one block, so the closing line belongs to the block rather than to the row itself.
+	// Left on the row, the border draws above that content, which then reads as belonging to the
+	// row underneath.
+	// A provider that heads a list sits closer to it than a normal row would, so the group reads as
+	// one block instead of a row followed by a list.
+	.settings-payments-methods__group--nested {
+		> .woocommerce-list__item:first-child .woocommerce-list__item-inner {
+			padding-bottom: var(--wpds-dimension-padding-xs);
+		}
+	}
+
+	.settings-payments-methods__group {
+		border-bottom: var(--wpds-border-width-xs) solid
+			var(--wpds-color-stroke-surface-neutral-weak);
+		// The row brings its own padding at the top of the block, but what follows it carries none,
+		// so without this the last item sits against the divider.
+		padding-bottom: var(--wpds-dimension-padding-lg);
+
+		> .woocommerce-list__item {
+			border-bottom: none;
+		}
+	}
+
+	.settings-payments-methods__child.woocommerce-list__item {
+		border-top: none;
+		border-bottom: none;
+
+		// Nested rows carry the logo in their own column, so the copy of it that the provider
+		// embeds in the label would show the same mark twice on one line. Only the name is wanted
+		// here; the label's text nodes, including any badge, stay.
+		.woocommerce-list__item-title img,
+		.woocommerce-list__item-title svg {
+			display: none;
+		}
+
+		// Hiding the image leaves whatever framed it — some providers wrap theirs in a bordered
+		// box — as an empty outline after the name. Strip the frame rather than the element, so
+		// any text sharing that wrapper survives.
+		.woocommerce-list__item-title :has(> img),
+		.woocommerce-list__item-title :has(> svg) {
+			border: 0;
+			padding: 0;
+			background: none;
+		}
+
+		.woocommerce-list__item-inner {
+			// Nested rows are a dense list under their provider, so they take no padding at all —
+			// the 24px logo sets the height on its own.
+			padding: 0;
+		}
+	}
+}
+
+.settings-payments-methods__actions {
+	display: flex;
+	align-items: center;
+	gap: var(--wpds-dimension-gap-md);
+}
+
+// Stands in for the payment method logo. It carries woocommerce-list__item-image alongside this
+// class, so width and radius come from the providers list rule; only the fill and the height an
+// empty element cannot derive on its own are set here. See MethodIcon.
+.settings-payments-methods__icon-placeholder {
+	aspect-ratio: 1;
+	background-color: var(--wpds-color-background-surface-neutral-weak);
+	// The neutral-weak fill is #f4f4f4, which is invisible against the white row on its own. The
+	// ring is inset rather than a border so it cannot add to the width the shared image rule sets.
+	box-shadow: inset 0 0 0 var(--wpds-border-width-xs)
+		var(--wpds-color-stroke-surface-neutral-weak);
+	flex-shrink: 0;
+}
+
+// A real logo, whether it came from the registration or from the provider. Width and radius come
+// from the shared woocommerce-list__item-image rule it carries alongside this class; this only
+// keeps a non-square asset inside the square the placeholder establishes.
+.settings-payments-methods__icon {
+	aspect-ratio: 1;
+	object-fit: contain;
+	flex-shrink: 0;
+}
+
+// Nested rows use the rectangle artwork, which is drawn at 38x24. The shared image rule sizes for
+// the square set, so both dimensions are restated rather than letting a wider box letterbox it.
+// Both classes are named to outweigh `.settings-payment-gateways__list .woocommerce-list__item-image`,
+// which otherwise pins the width to the square set's 40px.
+.woocommerce-list__item-image.settings-payments-methods__icon--rectangle {
+	aspect-ratio: auto;
+	width: 38px;
+	height: 24px;
+}
+
+// The rectangle set is drawn at 38x24, so the badge is sized to the artwork rather than capped at
+// an arbitrary height. A provider without a bundled asset falls back to its own logo, which can be
+// any shape, hence the max rather than a fixed size.
+.settings-payments-methods__provider-icon {
+	max-width: 38px;
+	max-height: 24px;
+	width: auto;
+}
+
+// Nested rows carry no drag handle, but their logo still lines up with every other row's, so the
+// handle column is stood in for by an invisible copy of the real thing rather than by a fixed
+// offset — it stays correct if the handle changes size.
+.settings-payments-methods__drag-handle-spacer {
+	visibility: hidden;
+}
+
+.settings-payments-methods__notice.components-notice {
+	// Sits beside the row rather than inside it, so it has to reproduce the row's own horizontal
+	// padding. The space below comes from the block's padding-bottom.
+	margin: 0 48px;
+
+	.components-button {
+		display: block;
+		margin-top: var(--wpds-dimension-gap-sm);
+	}
+}

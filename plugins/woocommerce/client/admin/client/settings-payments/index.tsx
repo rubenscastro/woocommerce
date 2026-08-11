@@ -20,6 +20,14 @@ import { Header } from './components/header/header';
 import { BackButton } from './components/buttons/back-button';
 import { ListPlaceholder } from '~/settings-payments/components/list-placeholder';
 import './settings-payments-main.scss';
+// Imported eagerly so the styles land in the settings-embed stylesheet rather than in the lazy
+// chunk's own async CSS, matching how the rest of this module loads its styles.
+//
+// The list stylesheet has to come along: it is what neutralises the default hover background on
+// `woocommerce-list__item` and sets the row padding. It used to arrive only with the
+// settings-payments-main chunk, so any other screen reusing the list rendered unstyled rows.
+import './components/payment-gateway-list/payment-gateway-list.scss';
+import './settings-payments-methods.scss';
 
 /**
  * Lazy-loaded chunk for the main settings page of payment gateways.

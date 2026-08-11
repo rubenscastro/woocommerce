@@ -7,6 +7,7 @@ use Automattic\WooCommerce\Blocks\Assets\AssetDataRegistry;
 use Automattic\WooCommerce\Blocks\Package;
 use Automattic\WooCommerce\Blocks\Payments\Api as BlocksPaymentsApi;
 use Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry;
+use ReflectionClass;
 use Throwable;
 use WC_Settings_Payment_Gateways;
 use _WP_Dependency;
@@ -44,6 +45,13 @@ class BlocksPaymentMethodsSpikeController {
 	 * @var string
 	 */
 	private const ASSET_DATA_KEY = 'blocksPaymentMethodsSpike';
+
+	/**
+	 * The handle that defines the `wc.wcBlocksData` global.
+	 *
+	 * @var string
+	 */
+	private const BLOCKS_DATA_HANDLE = 'wc-blocks-data-store';
 
 	/**
 	 * Register hooks.
@@ -91,6 +99,15 @@ class BlocksPaymentMethodsSpikeController {
 				return;
 			}
 
+			// Some integrations reach for `wc.wcBlocksData` at module scope without declaring the
+			// handle that defines it, because the Cart/Checkout blocks always happen to have loaded
+			// it first. Here nothing else pulls it in, so the destructuring throws and the script
+			// registers nothing — Square's Cash App Pay is one. Add it for everyone rather than
+			// waiting for each extension to fix its dependency list.
+			if ( wp_script_is( self::BLOCKS_DATA_HANDLE, 'registered' ) ) {
+				array_unshift( $handles, self::BLOCKS_DATA_HANDLE );
+			}
+
 			foreach ( $handles as $handle ) {
 				wp_enqueue_script( $handle );
 			}
@@ -105,14 +122,37 @@ class BlocksPaymentMethodsSpikeController {
 			// publish it directly.
 			$container->get( BlocksPaymentsApi::class )->add_payment_method_script_data();
 
+			$asset_registry = $container->get( AssetDataRegistry::class );
+
+			// `PaymentMethodRegistry` overrides the generic script data with its own
+			// `paymentMethodData` shape, so the `{name}_data` key `IntegrationRegistry` would have
+			// published never appears. Integrations that read that key instead — again Square's
+			// Cash App Pay — throw on the missing data. Publishing both shapes costs one array and
+			// keeps either convention working.
+			foreach ( $payment_method_registry->get_all_active_registered() as $name => $integration ) {
+				$key = (string) $name . '_data';
+
+				if ( '' === (string) $name || $asset_registry->exists( $key ) ) {
+					continue;
+				}
+
+				$data = $integration->get_script_data();
+
+				if ( ! empty( $data ) ) {
+					$asset_registry->add( $key, $data );
+				}
+			}
+
 			// Discovery above is generic. This is the one piece of gateway-specific knowledge, and
 			// it answers a question the registry cannot: whether a provider's methods are its own
 			// to render. See StripeOptimizedCheckoutAdapter.
-			$asset_registry = $container->get( AssetDataRegistry::class );
 			if ( ! $asset_registry->exists( self::ASSET_DATA_KEY ) ) {
 				$asset_registry->add(
 					self::ASSET_DATA_KEY,
-					array( 'groupedProviders' => ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers() )
+					array_merge(
+						array( 'groupedProviders' => ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers() ),
+						$this->get_provider_context( $payment_method_registry )
+					)
 				);
 			}
 		} catch ( Throwable $e ) {
@@ -147,6 +187,113 @@ class BlocksPaymentMethodsSpikeController {
 		return 'wc-settings' === $page
 			&& WC_Settings_Payment_Gateways::TAB_NAME === $tab
 			&& WC_Settings_Payment_Gateways::PAYMENT_METHODS_SECTION_NAME === $section;
+	}
+
+	/**
+	 * The context the list needs to show each method's provider.
+	 *
+	 * Two maps, joined on the plugin slug: which plugin owns each registered id, and which logo
+	 * each plugin has. Sub-gateways such as `stripe_klarna` never appear in the payments providers
+	 * list, so ownership is resolved by reflection on the class instead.
+	 *
+	 * Both the gateways and the Blocks integrations are walked, because neither covers everything:
+	 * a provider can register a Checkout Block payment method with no matching `WC_Payment_Gateway`
+	 * at all — PayPal Payments' `ppcp-pwc` ("Pay with Crypto") is one — and those methods would
+	 * otherwise render with no provider logo.
+	 *
+	 * @param PaymentMethodRegistry $payment_method_registry The Blocks payment method registry.
+	 *
+	 * @return array{gatewayPlugins: array<string, string>, providerIcons: array<string, string>, methodIcons: array<string, string>, providerAssets: array<string, string>}
+	 */
+	private function get_provider_context( PaymentMethodRegistry $payment_method_registry ): array {
+		$gateway_plugins = array();
+
+		foreach ( WC()->payment_gateways()->payment_gateways() as $gateway_id => $gateway ) {
+			$gateway_plugins[ (string) $gateway_id ] = $this->get_owning_plugin( $gateway );
+		}
+
+		foreach ( $payment_method_registry->get_all_active_registered() as $name => $integration ) {
+			if ( '' === (string) $name || isset( $gateway_plugins[ (string) $name ] ) ) {
+				continue;
+			}
+
+			$gateway_plugins[ (string) $name ] = $this->get_owning_plugin( $integration );
+		}
+
+		$provider_icons = array();
+		$scheme         = wp_parse_url( site_url(), PHP_URL_SCHEME );
+		$scheme         = is_string( $scheme ) ? $scheme : 'https';
+
+		// Read the logos straight off the gateways rather than from the payments providers service.
+		// That service assembles suggestions and incentives and runs third-party code along the way,
+		// so one misbehaving extension takes the whole map down — a Helcim TypeError was doing
+		// exactly that here, leaving every row without a provider badge. The gateway's own `icon`
+		// is the same value the service would end up reporting, without the blast radius.
+		foreach ( WC()->payment_gateways()->payment_gateways() as $gateway_id => $gateway ) {
+			$plugin_slug = $gateway_plugins[ (string) $gateway_id ] ?? '';
+			$icon        = is_string( $gateway->icon ?? null ) ? trim( $gateway->icon ) : '';
+
+			if ( '' === $plugin_slug || isset( $provider_icons[ $plugin_slug ] ) ) {
+				continue;
+			}
+
+			// Some gateways put an <img> tag, or a list of them, in this property.
+			if ( '' === $icon || ! wc_is_valid_url( $icon ) ) {
+				continue;
+			}
+
+			// Take the scheme from the site URL rather than from `is_ssl()`. Behind a proxy that
+			// terminates TLS — ngrok, most load balancers — `is_ssl()` is false even though the page
+			// is served over https, so `WC_HTTPS::force_https_url()` leaves the gateway's stored
+			// `http://` icon untouched and the browser blocks it as mixed content.
+			$provider_icons[ $plugin_slug ] = set_url_scheme( $icon, $scheme );
+		}
+
+		return array(
+			'gatewayPlugins' => $gateway_plugins,
+			'providerIcons'  => $provider_icons,
+			'methodIcons'    => $this->get_bundled_icons( 'square' ),
+			'providerAssets' => $this->get_bundled_icons( 'rectangle' ),
+		);
+	}
+
+	/**
+	 * The plugin directory slug that owns a gateway or integration class.
+	 *
+	 * @param object $instance The gateway or integration to inspect.
+	 *
+	 * @return string
+	 */
+	private function get_owning_plugin( object $instance ): string {
+		$file = ( new ReflectionClass( $instance ) )->getFileName();
+
+		return preg_match( '#/plugins/([^/]+)/#', (string) $file, $matches ) ? $matches[1] : 'woocommerce';
+	}
+
+	/**
+	 * The bundled payment logos of one shape, keyed by file name.
+	 *
+	 * Two shapes are shipped and they are different artwork, not the same drawing reframed: the
+	 * square set is 40x40 and fills the logo column beside each method name, the rectangle set is
+	 * 38x24 and suits the provider badge on the trailing edge. Matching a name against these keys
+	 * costs nothing and adds no assets, so it stands in until providers declare their own logos.
+	 *
+	 * @param string $shape Either `square` or `rectangle`.
+	 *
+	 * @return array<string, string> Icon slug => URL.
+	 */
+	private function get_bundled_icons( string $shape ): array {
+		$icons     = array();
+		$directory = 'assets/images/payment-logos/' . $shape . '/';
+		$files     = glob( WC_ABSPATH . $directory . '*.svg' );
+
+		foreach ( (array) $files as $file ) {
+			$slug = basename( (string) $file, '.svg' );
+
+			$icons[ $slug ] = plugins_url( $directory . basename( (string) $file ), WC_PLUGIN_FILE );
+		}
+
+		return $icons;
 	}
 
 	/**
