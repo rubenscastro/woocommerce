@@ -173,6 +173,15 @@ export const PaymentGateways = ( {
 				<div className="settings-payment-gateways__header-title">
 					{ __( 'Payment providers', 'woocommerce' ) }
 				</div>
+				<Link
+					className="settings-payment-gateways__header-methods-link"
+					href={ getAdminLink(
+						'admin.php?page=wc-settings&tab=checkout&section=payment-methods'
+					) }
+					type="wp-admin"
+				>
+					{ __( 'View payment methods', 'woocommerce' ) }
+				</Link>
 				<div className={ selectContainerClass }>
 					<CountrySelector
 						className="woocommerce-select-control__country"

@@ -92,6 +92,21 @@ $payments-header-row-height: 38px;
 			color: $gray-900;
 		}
 
+		// Sits immediately before the business location selector. The header is
+		// `space-between`, so push this off the title to keep it grouped with the
+		// selector on the trailing edge rather than floating in the middle.
+		&__header-methods-link {
+			margin-inline-start: auto;
+			margin-inline-end: $gap;
+			white-space: nowrap;
+
+			@media screen and (max-width: $break-mobile) {
+				display: inline-block;
+				margin-inline: 0;
+				margin-block-end: $gap-smaller;
+			}
+		}
+
 		&__header-select-container {
 			min-width: 280px;
 			min-height: 36px;

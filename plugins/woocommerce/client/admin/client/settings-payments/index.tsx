@@ -72,6 +72,16 @@ const SettingsPaymentsChequeChunk = lazy(
 		)
 );
 
+/**
+ * Lazy-loaded chunk for the Checkout Block payment methods page.
+ */
+const SettingsPaymentsMethodsChunk = lazy(
+	() =>
+		import(
+			/* webpackChunkName: "settings-payments-methods" */ './settings-payments-methods'
+		)
+);
+
 interface OfflinePaymentGatewayWrapperProps {
 	title: string;
 	chunkComponent: React.ComponentType;
@@ -264,6 +274,20 @@ export const SettingsPaymentsWooPaymentsWrapper = () => {
 				}
 			>
 				<SettingsPaymentsWooPaymentsChunk />
+			</Suspense>
+		</>
+	);
+};
+
+/**
+ * Wraps the Checkout Block payment methods page.
+ */
+export const SettingsPaymentsMethodsWrapper = () => {
+	return (
+		<>
+			<Header title={ __( 'Payment methods', 'woocommerce' ) } />
+			<Suspense fallback={ <ListPlaceholder rows={ 3 } /> }>
+				<SettingsPaymentsMethodsChunk />
 			</Suspense>
 		</>
 	);

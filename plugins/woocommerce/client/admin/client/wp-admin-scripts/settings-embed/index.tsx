@@ -18,6 +18,7 @@ import {
 	SettingsPaymentsChequeWrapper,
 	SettingsPaymentsCodWrapper,
 	SettingsPaymentsMainWrapper,
+	SettingsPaymentsMethodsWrapper,
 	SettingsPaymentsOfflineWrapper,
 	SettingsPaymentsWooPaymentsWrapper,
 } from '~/settings-payments';
@@ -59,6 +60,10 @@ const renderPaymentsSettings = () => {
 		{
 			id: 'experimental_wc_settings_payments_woocommerce_payments',
 			component: <SettingsPaymentsWooPaymentsWrapper />,
+		},
+		{
+			id: 'experimental_wc_settings_payments_payment-methods',
+			component: <SettingsPaymentsMethodsWrapper />,
 		},
 	];
 
