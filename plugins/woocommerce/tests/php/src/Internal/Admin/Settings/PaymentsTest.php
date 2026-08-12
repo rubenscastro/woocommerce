@@ -5,6 +5,7 @@ namespace Automattic\WooCommerce\Tests\Internal\Admin\Settings;
 
 use Automattic\WooCommerce\Internal\Admin\Settings\PaymentsProviders;
 use Automattic\WooCommerce\Internal\Admin\Settings\Payments;
+use Automattic\WooCommerce\Internal\Admin\Settings\PaymentMethodsOrder;
 use Automattic\WooCommerce\Internal\Admin\Suggestions\PaymentsExtensionSuggestions;
 use Automattic\WooCommerce\Internal\Admin\Suggestions\PaymentsExtensionSuggestions as ExtensionSuggestions;
 use Automattic\WooCommerce\Proxies\LegacyProxy;
@@ -79,7 +80,7 @@ class PaymentsTest extends WC_Unit_Test_Case {
 		$this->mock_providers->init( $this->mock_extension_suggestions, wc_get_container()->get( LegacyProxy::class ) );
 
 		$this->sut = new Payments();
-		$this->sut->init( $this->mock_providers, $this->mock_extension_suggestions );
+		$this->sut->init( $this->mock_providers, $this->mock_extension_suggestions, new PaymentMethodsOrder() );
 		$this->sut->clear_cache();
 	}
 
@@ -645,7 +646,7 @@ class PaymentsTest extends WC_Unit_Test_Case {
 			->willReturn( array() );
 
 		$other_service = new Payments();
-		$other_service->init( $this->mock_providers, $this->mock_extension_suggestions );
+		$other_service->init( $this->mock_providers, $this->mock_extension_suggestions, new PaymentMethodsOrder() );
 
 		$first  = $this->sut->get_payment_providers( 'US' );
 		$second = $other_service->get_payment_providers( 'US' );
@@ -1018,5 +1019,77 @@ class PaymentsTest extends WC_Unit_Test_Case {
 			),
 			'other'     => array(),
 		);
+	}
+
+	/**
+	 * @testdox Should persist the canonical order and project it to the gateway order for Classic checkout.
+	 */
+	public function test_update_payment_method_order_persists_and_projects(): void {
+		$this->register_fake_gateways(
+			array(
+				'gw_a' => 'yes',
+				'gw_c' => 'yes',
+			)
+		);
+		delete_option( PaymentMethodsOrder::OPTION_NAME );
+
+		$this->mock_providers
+			->expects( $this->once() )
+			->method( 'update_payment_providers_order_map' )
+			->with(
+				array(
+					'gw_c' => 0,
+					'gw_a' => 1,
+				)
+			)
+			->willReturn( true );
+
+		$result = $this->sut->update_payment_method_order( array( 'gw_c', 'gw_a' ) );
+
+		$this->assertTrue( $result, 'Updating the payment method order should succeed.' );
+		$this->assertSame(
+			array( 'gw_c', 'gw_a' ),
+			get_option( PaymentMethodsOrder::OPTION_NAME ),
+			'The canonical option should hold the submitted order.'
+		);
+
+		delete_option( PaymentMethodsOrder::OPTION_NAME );
+		remove_all_filters( 'woocommerce_payment_gateways' );
+		WC()->payment_gateways()->payment_gateways = array();
+		WC()->payment_gateways()->init();
+	}
+
+	/**
+	 * Register a deterministic set of fake payment gateways.
+	 *
+	 * @param array<string, string> $specs Map of gateway ID to enabled flag ('yes'|'no'), in order.
+	 */
+	private function register_fake_gateways( array $specs ): void {
+		$gateways = array();
+		foreach ( $specs as $id => $enabled ) {
+			$gateways[] = new class( $id, $enabled ) extends \WC_Payment_Gateway {
+				/**
+				 * Build a fake gateway with a fixed ID and enabled flag.
+				 *
+				 * @param string $id      The gateway ID.
+				 * @param string $enabled The enabled flag ('yes'|'no').
+				 */
+				public function __construct( string $id, string $enabled ) {
+					$this->id      = $id;
+					$this->enabled = $enabled;
+				}
+			};
+		}
+
+		add_filter(
+			'woocommerce_payment_gateways',
+			function () use ( $gateways ) {
+				return $gateways;
+			}
+		);
+
+		// Reset the accumulated list so init() rebuilds from just the fake gateways.
+		WC()->payment_gateways()->payment_gateways = array();
+		WC()->payment_gateways()->init();
 	}
 }

@@ -1048,6 +1048,7 @@ class PaymentsProviders {
 		return update_option( self::PROVIDERS_ORDER_OPTION, $order_map );
 	}
 
+
 	/**
 	 * Update the payment providers order map.
 	 *

@@ -21,7 +21,6 @@ import {
 	isWooPayEligible,
 	recordPaymentsProviderEvent,
 } from '~/settings-payments/utils';
-import { DefaultDragHandle } from '~/settings-payments/components/sortable';
 import { StatusBadge } from '~/settings-payments/components/status-badge';
 import { IncentiveStatusBadge } from '~/settings-payments/components/incentive-status-badge';
 import { OfficialBadge } from '~/settings-payments/components/official-badge';
@@ -99,7 +98,6 @@ export const PaymentExtensionSuggestionListItem = ( {
 		>
 			<div className="woocommerce-list__item-inner">
 				<div className="woocommerce-list__item-before">
-					<DefaultDragHandle />
 					{ suggestion.icon && (
 						<img
 							className={ 'woocommerce-list__item-image' }

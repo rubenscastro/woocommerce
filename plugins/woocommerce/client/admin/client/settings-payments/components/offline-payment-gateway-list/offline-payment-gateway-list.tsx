@@ -9,11 +9,6 @@ import { type OfflinePaymentMethodProvider } from '@woocommerce/data';
  */
 import sanitizeHTML from '~/lib/sanitize-html';
 import {
-	DefaultDragHandle,
-	SortableContainer,
-	SortableItem,
-} from '../sortable';
-import {
 	EnableGatewayButton,
 	SettingsButton,
 } from '~/settings-payments/components/buttons';
@@ -28,7 +23,7 @@ type OfflinePaymentGatewayListItemProps = {
 };
 
 /**
- * A component that renders an offline payment gateway as a sortable list item.
+ * A component that renders an offline payment gateway as a list item.
  * Displays gateway information including the title, description, icon, and actions to enable or manage the gateway.
  */
 export const OfflinePaymentGatewayListItem = ( {
@@ -36,19 +31,16 @@ export const OfflinePaymentGatewayListItem = ( {
 	...props
 }: OfflinePaymentGatewayListItemProps ) => {
 	return (
-		<SortableItem
-			key={ gateway.id }
+		<div
 			id={ gateway.id }
 			className={
 				'woocommerce-list__item woocommerce-list__item-enter-done' +
 				( props.className ? ` ${ props.className }` : '' )
 			}
-			{ ...props }
 		>
 			<div className="woocommerce-list__item-inner">
-				{ /* Left section with drag handle and icon */ }
+				{ /* Left section with icon */ }
 				<div className="woocommerce-list__item-before">
-					<DefaultDragHandle />
 					{ gateway.icon && (
 						<img
 							className={ 'woocommerce-list__item-image' }
@@ -64,7 +56,6 @@ export const OfflinePaymentGatewayListItem = ( {
 					</span>
 					<span
 						className="woocommerce-list__item-content"
-						// eslint-disable-next-line react/no-danger -- This string is sanitized by the PaymentGateway class.
 						dangerouslySetInnerHTML={ sanitizeHTML(
 							decodeEntities( gateway.description )
 						) }
@@ -98,27 +89,22 @@ export const OfflinePaymentGatewayListItem = ( {
 					</div>
 				</div>
 			</div>
-		</SortableItem>
+		</div>
 	);
 };
 
 /**
- * A component that renders a sortable list of offline payment gateways.
- * Each gateway is rendered as a `OfflinePaymentGatewayListItem` and the list supports reordering via drag-and-drop.
+ * A component that renders the list of offline payment gateways.
+ * Each gateway is rendered as an `OfflinePaymentGatewayListItem`. The list is presentation-only and
+ * not reorderable; offline method ordering at checkout is controlled on the Payment methods page.
  */
 export const OfflinePaymentGatewayList = ( {
 	gateways,
-	setGateways,
 }: {
 	gateways: OfflinePaymentMethodProvider[];
-	setGateways: ( gateways: OfflinePaymentMethodProvider[] ) => void;
 } ) => {
 	return (
-		<SortableContainer< OfflinePaymentMethodProvider >
-			className="woocommerce-list"
-			items={ gateways }
-			setItems={ setGateways }
-		>
+		<div className="woocommerce-list">
 			{ gateways.map( ( method, index ) => (
 				<OfflinePaymentGatewayListItem
 					gateway={ method }
@@ -129,6 +115,6 @@ export const OfflinePaymentGatewayList = ( {
 					}
 				/>
 			) ) }
-		</SortableContainer>
+		</div>
 	);
 };

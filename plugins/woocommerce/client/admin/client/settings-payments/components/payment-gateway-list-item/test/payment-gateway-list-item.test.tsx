@@ -52,11 +52,6 @@ jest.mock( '~/settings-payments/components/ellipsis-menu-content', () => ( {
 	),
 } ) );
 
-jest.mock( '~/settings-payments/components/sortable', () => ( {
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Mock is used by PaymentGatewayListItem component
-	DefaultDragHandle: () => <div data-testid="drag-handle">DragHandle</div>,
-} ) );
-
 jest.mock( '~/settings-payments/components/buttons', () => ( {
 	// eslint-disable-next-line @typescript-eslint/no-unused-vars -- Mock is used by PaymentGatewayListItem component
 	ActivatePaymentsButton: ( { incentive }: { incentive?: unknown } ) => (
@@ -303,16 +298,16 @@ describe( 'PaymentGatewayListItem', () => {
 			expect( item ).toHaveClass( 'has-incentive' );
 		} );
 
-		it( 'renders drag handle', () => {
+		it( 'does not render a drag handle (the providers list is not reorderable)', () => {
 			const gateway = createMockGateway();
-			const { getByTestId } = render(
+			const { queryByTestId } = render(
 				<PaymentGatewayListItem
 					gateway={ gateway }
 					{ ...defaultProps }
 				/>
 			);
 
-			expect( getByTestId( 'drag-handle' ) ).toBeInTheDocument();
+			expect( queryByTestId( 'drag-handle' ) ).not.toBeInTheDocument();
 		} );
 
 		it( 'renders ellipsis menu', () => {
