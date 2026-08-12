@@ -1,0 +1,4 @@
+Significance: minor
+Type: update
+
+Remove drag-and-drop reordering from the Payment providers and offline payment methods settings pages, and order the providers list by native gateway registration order. Checkout payment-method ordering is now controlled solely on the Payment methods page.

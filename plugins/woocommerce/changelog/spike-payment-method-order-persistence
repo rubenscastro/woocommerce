@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Persist a canonical checkout payment-method order (new woocommerce_payment_method_order option) consumed by the Checkout Block and projected to the gateway order for Classic checkout, saved via a REST endpoint.

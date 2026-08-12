@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Wire the Payment methods settings page to persist the checkout payment-method order, with a confirmation snackbar on save and a back button to the Payments settings.
