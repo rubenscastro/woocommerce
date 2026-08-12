@@ -150,7 +150,9 @@ class BlocksPaymentMethodsSpikeController {
 				$asset_registry->add(
 					self::ASSET_DATA_KEY,
 					array_merge(
-						array( 'groupedProviders' => ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers() ),
+						array(
+							'groupedProviders' => ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers(),
+						),
 						$this->get_provider_context( $payment_method_registry )
 					)
 				);

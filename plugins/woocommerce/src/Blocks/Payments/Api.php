@@ -7,6 +7,7 @@ use Automattic\WooCommerce\Blocks\Payments\Integrations\BankTransfer;
 use Automattic\WooCommerce\Blocks\Payments\Integrations\CashOnDelivery;
 use Automattic\WooCommerce\Blocks\Payments\Integrations\Cheque;
 use Automattic\WooCommerce\Blocks\Payments\Integrations\PayPal;
+use Automattic\WooCommerce\Internal\Admin\Settings\PaymentMethodsOrder;
 use Automattic\WooCommerce\Internal\Features\BlockEditorUnifiedAssets;
 
 /**
@@ -100,16 +101,35 @@ class Api {
 	}
 
 	/**
+	 * Get the sort order of the payment methods for the Checkout Block.
+	 *
+	 * When a canonical checkout payment-method order has been persisted (from the Payments >
+	 * Payment methods settings page), it is the source of truth. Otherwise we fall back to the
+	 * legacy behavior of using the order of all enabled gateways.
+	 *
+	 * @return string[] The ordered list of enabled payment-method IDs.
+	 */
+	private function get_payment_method_sort_order() {
+		$methods_order = wc_get_container()->get( PaymentMethodsOrder::class );
+		if ( $methods_order->exists() ) {
+			return $methods_order->get_for_checkout();
+		}
+
+		// Legacy fallback: use payment_gateways() to get the sort order of all enabled gateways. Some may be
+		// programmatically disabled later on, but we still need to know where the enabled ones are in the list.
+		$payment_gateways = WC()->payment_gateways->payment_gateways();
+		$enabled_gateways = array_filter( $payment_gateways, array( $this, 'is_payment_gateway_enabled' ) );
+
+		return array_keys( $enabled_gateways );
+	}
+
+	/**
 	 * Add payment method data to Asset Registry.
 	 */
 	public function add_payment_method_script_data() {
 		// Enqueue the order of enabled gateways.
 		if ( ! $this->asset_registry->exists( 'paymentMethodSortOrder' ) ) {
-			// We use payment_gateways() here to get the sort order of all enabled gateways. Some may be
-			// programmatically disabled later on, but we still need to know where the enabled ones are in the list.
-			$payment_gateways = WC()->payment_gateways->payment_gateways();
-			$enabled_gateways = array_filter( $payment_gateways, array( $this, 'is_payment_gateway_enabled' ) );
-			$this->asset_registry->add( 'paymentMethodSortOrder', array_keys( $enabled_gateways ) );
+			$this->asset_registry->add( 'paymentMethodSortOrder', $this->get_payment_method_sort_order() );
 		}
 
 		// Enqueue all registered gateway data (settings/config etc).

@@ -18,7 +18,6 @@ import {
 	isWooPayEligible,
 	isWooPayments,
 } from '~/settings-payments/utils';
-import { DefaultDragHandle } from '~/settings-payments/components/sortable';
 import { WC_ASSET_URL } from '~/utils/admin-settings';
 import {
 	ActivatePaymentsButton,
@@ -133,7 +132,6 @@ export const PaymentGatewayListItem = ( {
 		>
 			<div className="woocommerce-list__item-inner">
 				<div className="woocommerce-list__item-before">
-					<DefaultDragHandle />
 					{ gateway.icon && (
 						<img
 							className={ 'woocommerce-list__item-image' }

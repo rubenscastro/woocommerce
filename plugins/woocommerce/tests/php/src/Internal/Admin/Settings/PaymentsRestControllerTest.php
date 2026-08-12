@@ -607,6 +607,49 @@ class PaymentsRestControllerTest extends WC_Unit_Test_Case {
 	}
 
 	/**
+	 * @testdox Should forward the payment-method order (as a list of strings) to the service.
+	 */
+	public function test_update_payment_methods_order_success() {
+		$this->mock_service
+			->expects( $this->once() )
+			->method( 'update_payment_method_order' )
+			->with( array( 'gw_a', '42', 'gw_b' ) )
+			->willReturn( true );
+
+		$request = new WP_REST_Request( 'POST', self::ENDPOINT . '/payment-methods/order' );
+		$request->set_body_params(
+			array(
+				'order' => array( 'gw_a', 42, 'gw_b' ),
+			)
+		);
+		$response = $this->server->dispatch( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertTrue( $response->get_data()['success'] );
+	}
+
+	/**
+	 * @testdox Should map an empty-order rejection from the service to a 400 error.
+	 */
+	public function test_update_payment_methods_order_rejects_empty() {
+		$this->mock_service
+			->expects( $this->once() )
+			->method( 'update_payment_method_order' )
+			->willThrowException( new \InvalidArgumentException( 'empty order' ) );
+
+		$request = new WP_REST_Request( 'POST', self::ENDPOINT . '/payment-methods/order' );
+		$request->set_body_params(
+			array(
+				'order' => array( '' ),
+			)
+		);
+		$response = $this->server->dispatch( $request );
+
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( 'woocommerce_rest_invalid_payment_method_order', $response->get_data()['code'] );
+	}
+
+	/**
 	 * Test updating payment providers order with no order_map param.
 	 */
 	public function test_update_providers_order_empty_order_map() {

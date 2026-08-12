@@ -15,6 +15,8 @@ import {
 } from '@wordpress/element';
 import { Button, ExternalLink, Notice } from '@wordpress/components';
 import { Icon, dragHandle } from '@wordpress/icons';
+import { useDispatch } from '@wordpress/data';
+import { paymentSettingsStore } from '@woocommerce/data';
 import clsx from 'clsx';
 import { getAdminLink, getSetting } from '@woocommerce/settings';
 import { __ } from '@wordpress/i18n';
@@ -28,6 +30,7 @@ import {
 	SortableItem,
 } from '~/settings-payments/components/sortable';
 import { StatusBadge } from '~/settings-payments/components/status-badge';
+import { BackButton } from '~/settings-payments/components/buttons';
 // Paints #wpbody and #mainform white for the whole Payments tab. Every other page in this module
 // imports it; without it the wp-admin body grey shows through behind the list — most visibly
 // behind a row while it is being dragged.
@@ -48,7 +51,7 @@ type SpikeSettings = {
 	providerAssets?: Record< string, string >;
 };
 
-type Row = {
+export type Row = {
 	id: string;
 	paymentMethod: RegisteredPaymentMethod;
 	group: GroupedProvider | null;
@@ -369,12 +372,24 @@ const buildRows = (
 	// page agree with checkout. Skipped when the list is unavailable, so a missing setting errs
 	// towards showing too much rather than nothing.
 	const enabled = new Set( enabledGatewayIds );
-	const paymentMethods =
+	const filtered =
 		enabled.size > 0
 			? registered.filter( ( method ) =>
 					enabled.has( gatewayIdOf( method ) )
 			  )
 			: registered;
+
+	// `enabledGatewayIds` is also the order checkout uses, so sort the methods by it — a stable sort
+	// keeps registry order both for ties and for anything not listed (e.g. a newly registered method),
+	// which then falls to the end.
+	const orderIndex = new Map(
+		enabledGatewayIds.map( ( id, index ) => [ id, index ] )
+	);
+	const positionOf = ( method: RegisteredPaymentMethod ) =>
+		orderIndex.get( gatewayIdOf( method ) ) ?? Number.MAX_SAFE_INTEGER;
+	const paymentMethods = [ ...filtered ].sort(
+		( a, b ) => positionOf( a ) - positionOf( b )
+	);
 
 	const byGatewayId = new Map(
 		paymentMethods.map( ( method ) => [ gatewayIdOf( method ), method ] )
@@ -409,6 +424,31 @@ const buildRows = (
 };
 
 /**
+ * Flatten the rendered rows into the canonical, ordered list of checkout payment-method IDs.
+ *
+ * The persisted identity of a method is its registry `name` — never a row/group id, `gatewayIdOf`,
+ * or `paymentMethodId` — so grouping stays presentation-only and never leaks into what is saved.
+ *
+ * - a standalone row emits its method's `name`;
+ * - a grouped row with Optimized Checkout on has no children, so it emits only the real method
+ *   `name` the row stands for (e.g. `stripe`), not a synthetic provider/group id;
+ * - a grouped row with Optimized Checkout off emits its method's `name` followed by each nested
+ *   child method's `name`, in the order the checkout renders them.
+ */
+export const serializePaymentMethodOrder = ( rows: Row[] ): string[] =>
+	rows.flatMap( ( row ) => [
+		row.paymentMethod.name,
+		...row.children.map( ( child ) => child.name ),
+	] );
+
+/**
+ * Whether two ordered id lists are identical.
+ */
+const ordersEqual = ( a: string[], b: string[] ): boolean =>
+	a.length === b.length &&
+	a.every( ( value, index ) => value === b[ index ] );
+
+/**
  * Lists the individual payment methods registered for the Checkout Block, in checkout order.
  *
  * The list comes from the client-side registry that the Checkout Block itself uses: the active
@@ -416,7 +456,8 @@ const buildRows = (
  * `BlocksPaymentMethodsSpikeController`), their scripts call `registerPaymentMethod()`, and this
  * component reads the result via `getPaymentMethods()`.
  *
- * Reordering is front-end only for now — nothing is persisted, so Save is inert.
+ * The order is persisted through the settings-payments REST endpoint: Save writes the canonical
+ * order (registry `name`s) that both Checkout Block and Classic checkout consume.
  */
 export const SettingsPaymentsMethods = () => {
 	const {
@@ -427,20 +468,72 @@ export const SettingsPaymentsMethods = () => {
 		providerAssets = {},
 	} = getSetting< SpikeSettings >( 'blocksPaymentMethodsSpike', {} );
 
-	// The registry is populated synchronously by the payment method scripts, which run before
-	// this bundle. Read it once so the list does not change under the user.
-	const defaultRows = useMemo(
-		() =>
-			buildRows(
-				Object.values( getPaymentMethods() ),
-				groupedProviders,
-				getSetting< string[] >( 'paymentMethodSortOrder', [] )
-			),
-		[ groupedProviders ]
+	const { updatePaymentMethodOrder } = useDispatch( paymentSettingsStore );
+	const { createSuccessNotice } = useDispatch( 'core/notices' );
+
+	// The registry is populated synchronously by the payment method scripts, which run before this
+	// bundle. Read it once so the list does not change under the user.
+	//
+	// `savedRows` reflect the persisted order (the canonical order when present, otherwise the
+	// default/fallback) and are both the initial state and the baseline for dirty detection.
+	const savedRows = useMemo( () => {
+		const registered = Object.values( getPaymentMethods() );
+		const sortOrder = getSetting< string[] >(
+			'paymentMethodSortOrder',
+			[]
+		);
+
+		return buildRows( registered, groupedProviders, sortOrder );
+	}, [ groupedProviders ] );
+
+	const [ rows, setRows ] = useState( savedRows );
+	// The persisted order the current rows are compared against. Updated only after a successful save,
+	// so the page's dirty state never diverges from what is actually stored.
+	const [ savedOrder, setSavedOrder ] = useState( () =>
+		serializePaymentMethodOrder( savedRows )
+	);
+	const [ isSaving, setIsSaving ] = useState( false );
+	const [ error, setError ] = useState< string | null >( null );
+	const [ isNoticeDismissed, setIsNoticeDismissed ] = useState( false );
+
+	const isDirty = ! ordersEqual(
+		serializePaymentMethodOrder( rows ),
+		savedOrder
 	);
 
-	const [ rows, setRows ] = useState( defaultRows );
-	const [ isNoticeDismissed, setIsNoticeDismissed ] = useState( false );
+	const handleSave = async () => {
+		setIsSaving( true );
+		setError( null );
+
+		const order = serializePaymentMethodOrder( rows );
+
+		try {
+			const result = ( await updatePaymentMethodOrder( order ) ) as
+				| { success: boolean }
+				| undefined;
+
+			if ( ! result?.success ) {
+				throw new Error( 'Saving the payment method order failed.' );
+			}
+
+			// Only adopt the new baseline once the server confirms the write.
+			setSavedOrder( order );
+
+			createSuccessNotice(
+				__( 'Payment method order saved.', 'woocommerce' ),
+				{ type: 'snackbar' }
+			);
+		} catch {
+			setError(
+				__(
+					'The payment method order could not be saved. Please try again.',
+					'woocommerce'
+				)
+			);
+		} finally {
+			setIsSaving( false );
+		}
+	};
 
 	const pluginSlugFor = ( paymentMethod: RegisteredPaymentMethod ) =>
 		gatewayPlugins[ gatewayIdOf( paymentMethod ) ];
@@ -493,29 +586,33 @@ export const SettingsPaymentsMethods = () => {
 			<div className="settings-payment-gateways">
 				<div className="settings-payment-gateways__header">
 					<div className="settings-payment-gateways__header-title">
+						<BackButton
+							href={ getAdminLink(
+								'admin.php?page=wc-settings&tab=checkout'
+							) }
+						/>
 						{ __( 'Reorder payment methods', 'woocommerce' ) }
 					</div>
 					<div className="settings-payments-methods__actions">
 						<Button
-							variant="link"
-							onClick={ () => setRows( defaultRows ) }
+							variant="primary"
+							onClick={ handleSave }
+							isBusy={ isSaving }
+							disabled={ ! isDirty || isSaving }
 						>
-							{ __( 'Reset to default order', 'woocommerce' ) }
-						</Button>
-						<Button
-							variant="secondary"
-							href={ getAdminLink(
-								'admin.php?page=wc-settings&tab=checkout'
-							) }
-						>
-							{ __( 'Cancel', 'woocommerce' ) }
-						</Button>
-						{ /* Ordering is not persisted yet — this is front-end only for now. */ }
-						<Button variant="primary" disabled>
 							{ __( 'Save', 'woocommerce' ) }
 						</Button>
 					</div>
 				</div>
+				{ error && (
+					<Notice
+						className="settings-payments-methods__error"
+						status="error"
+						onRemove={ () => setError( null ) }
+					>
+						{ error }
+					</Notice>
+				) }
 				<SortableContainer< Row >
 					items={ rows }
 					className="settings-payment-gateways__list"

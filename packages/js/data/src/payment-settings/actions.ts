@@ -142,6 +142,27 @@ export function updateProviderOrdering( orderMap: OrderMap ): {
 	};
 }
 
+/**
+ * Persist the canonical checkout payment-method order.
+ *
+ * POSTs the ordered list of payment-method IDs to the settings-payments REST endpoint. The page
+ * owns its local ordering state, so this action only performs the request and returns the result;
+ * it does not mutate the store.
+ *
+ * @param {string[]} order The ordered list of payment-method IDs (registry names).
+ *
+ * @return {Generator<unknown, { success: boolean }, unknown>} The server response.
+ */
+export function* updatePaymentMethodOrder( order: string[] ) {
+	const result: { success: boolean } = yield apiFetch( {
+		path: WC_ADMIN_NAMESPACE + '/settings/payments/payment-methods/order',
+		method: 'POST',
+		data: { order },
+	} );
+
+	return result;
+}
+
 export function setIsWooPayEligible( isEligible: boolean ): {
 	type: ACTION_TYPES.SET_IS_ELIGIBLE;
 	isEligible: boolean;

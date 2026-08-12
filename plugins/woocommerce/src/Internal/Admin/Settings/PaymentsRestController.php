@@ -6,6 +6,7 @@ namespace Automattic\WooCommerce\Internal\Admin\Settings;
 use Automattic\WooCommerce\Internal\RestApiControllerBase;
 use Automattic\WooCommerce\Internal\Utilities\ArrayUtil;
 use Exception;
+use InvalidArgumentException;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -113,6 +114,27 @@ class PaymentsRestController extends RestApiControllerBase {
 							'required'          => true,
 							'validate_callback' => fn( $value ) => $this->check_providers_order_map_arg( $value ),
 							'sanitize_callback' => fn( $value ) => $this->sanitize_providers_order_arg( $value ),
+						),
+					),
+				),
+			),
+			$override
+		);
+		register_rest_route(
+			$this->route_namespace,
+			'/' . $this->rest_base . '/payment-methods/order',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::EDITABLE,
+					'callback'            => fn( $request ) => $this->run( $request, 'update_payment_methods_order' ),
+					'permission_callback' => fn( $request ) => $this->check_permissions( $request ),
+					'args'                => array(
+						'order' => array(
+							'description'       => esc_html__( 'An ordered list of payment method IDs representing the checkout display order.', 'woocommerce' ),
+							'type'              => 'array',
+							'required'          => true,
+							'items'             => array( 'type' => 'string' ),
+							'sanitize_callback' => fn( $value ) => $this->sanitize_payment_methods_order_arg( $value ),
 						),
 					),
 				),
@@ -258,6 +280,29 @@ class PaymentsRestController extends RestApiControllerBase {
 		$order_map = $request->get_param( 'order_map' );
 
 		$result = $this->payments->update_payment_providers_order_map( $order_map );
+
+		return rest_ensure_response( array( 'success' => $result ) );
+	}
+
+	/**
+	 * Update the canonical checkout payment-method order.
+	 *
+	 * @param WP_REST_Request<array<string, mixed>> $request The request object.
+	 *
+	 * @return WP_Error|WP_REST_Response
+	 */
+	protected function update_payment_methods_order( WP_REST_Request $request ) { // phpcs:ignore Squiz.Commenting.FunctionComment.IncorrectTypeHint
+		$order = (array) $request->get_param( 'order' );
+
+		try {
+			$result = $this->payments->update_payment_method_order( $order );
+		} catch ( InvalidArgumentException $e ) {
+			return new WP_Error(
+				'woocommerce_rest_invalid_payment_method_order',
+				esc_html__( 'The payment method order must contain at least one valid payment method ID.', 'woocommerce' ),
+				array( 'status' => 400 )
+			);
+		}
 
 		return rest_ensure_response( array( 'success' => $result ) );
 	}
@@ -469,6 +514,32 @@ class PaymentsRestController extends RestApiControllerBase {
 		$provider_id = preg_replace( '|[^a-z0-9_\-]|i', '', $provider_id );
 
 		return $provider_id;
+	}
+
+	/**
+	 * Sanitize the payment-method order argument to a well-formed transport shape.
+	 *
+	 * This only enforces the request shape/type (a list of strings). The canonical identity
+	 * normalization (character sanitization, de-duplication, empty rejection) is owned by the
+	 * PaymentMethodsOrder service so that direct PHP callers get the same guarantees.
+	 *
+	 * @param mixed $value The raw argument value.
+	 *
+	 * @return string[] The value coerced to a list of strings.
+	 */
+	private function sanitize_payment_methods_order_arg( $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$strings = array();
+		foreach ( $value as $id ) {
+			if ( is_string( $id ) || is_numeric( $id ) ) {
+				$strings[] = (string) $id;
+			}
+		}
+
+		return $strings;
 	}
 
 	/**

@@ -52,12 +52,8 @@ export const SettingsPaymentsMain = () => {
 	const [ installingPlugin, setInstallingPlugin ] = useState< string | null >(
 		null
 	);
-	// State to hold the sorted providers in case of changing the order, otherwise it will be null
-	const [ sortedProviders, setSortedProviders ] = useState<
-		PaymentsProvider[] | null
-	>( null );
 	const { installAndActivatePlugins } = useDispatch( pluginsStore );
-	const { updateProviderOrdering, attachPaymentExtensionSuggestion } =
+	const { attachPaymentExtensionSuggestion } =
 		useDispatch( paymentSettingsStore );
 	const [ errorMessage, setErrorMessage ] = useState< string | null >( null );
 	const [
@@ -175,31 +171,6 @@ export const SettingsPaymentsMain = () => {
 			method: 'POST',
 		} );
 	}, [] );
-
-	/**
-	 * Clear sortedProviders when data store updates.
-	 */
-	useEffect( () => {
-		setSortedProviders( null );
-	}, [ providers ] );
-
-	function handleOrderingUpdate( sorted: PaymentsProvider[] ) {
-		// Extract the existing _order values in the sorted order
-		const updatedOrderValues = sorted
-			.map( ( provider ) => provider._order )
-			.sort( ( a, b ) => a - b );
-
-		// Build the orderMap by assigning the sorted _order values
-		const orderMap: Record< string, number > = {};
-		sorted.forEach( ( provider, index ) => {
-			orderMap[ provider.id ] = updatedOrderValues[ index ];
-		} );
-
-		void updateProviderOrdering( orderMap );
-
-		// Set the sorted providers to the state to give a real-time update
-		setSortedProviders( sorted );
-	}
 
 	const incentiveProvider = providers.find(
 		( provider: PaymentsProvider ) => '_incentive' in provider
@@ -532,13 +503,12 @@ export const SettingsPaymentsMain = () => {
 			) }
 			<div className="settings-payments-main__container">
 				<PaymentGateways
-					providers={ sortedProviders || providers }
+					providers={ providers }
 					installedPluginSlugs={ installedPluginSlugs }
 					installingPlugin={ installingPlugin }
 					setUpPlugin={ setUpPlugin }
 					acceptIncentive={ acceptIncentive }
 					shouldHighlightIncentive={ shouldHighlightIncentive }
-					updateOrdering={ handleOrderingUpdate }
 					isFetching={ isFetching }
 					businessRegistrationCountry={ businessCountry }
 					setBusinessRegistrationCountry={ setBusinessCountry }

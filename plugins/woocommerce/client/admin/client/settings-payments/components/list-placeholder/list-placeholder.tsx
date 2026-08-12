@@ -34,7 +34,9 @@ interface ListPlaceholderProps {
  */
 export const ListPlaceholder = ( {
 	rows,
-	hasDragIcon = true,
+	// The payments settings lists are no longer reorderable, so the loading skeleton does not show a
+	// drag grip by default. Callers that still render a sortable list can opt back in explicitly.
+	hasDragIcon = false,
 }: ListPlaceholderProps ) => {
 	// Create an array of placeholder items based on the number of rows.
 	const items = Array.from( { length: rows } ).map( () => {

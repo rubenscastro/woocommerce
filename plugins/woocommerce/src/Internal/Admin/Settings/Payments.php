@@ -47,16 +47,25 @@ class Payments {
 	private ExtensionSuggestions $extension_suggestions;
 
 	/**
+	 * The canonical checkout payment-method ordering service.
+	 *
+	 * @var PaymentMethodsOrder
+	 */
+	private PaymentMethodsOrder $payment_methods_order;
+
+	/**
 	 * Initialize the class instance.
 	 *
 	 * @param PaymentsProviders    $payment_providers             The payment providers service.
 	 * @param ExtensionSuggestions $payment_extension_suggestions The payment extension suggestions service.
+	 * @param PaymentMethodsOrder  $payment_methods_order         The canonical checkout payment-method ordering service.
 	 *
 	 * @internal
 	 */
-	final public function init( PaymentsProviders $payment_providers, ExtensionSuggestions $payment_extension_suggestions ): void {
+	final public function init( PaymentsProviders $payment_providers, ExtensionSuggestions $payment_extension_suggestions, PaymentMethodsOrder $payment_methods_order ): void {
 		$this->providers             = $payment_providers;
 		$this->extension_suggestions = $payment_extension_suggestions;
+		$this->payment_methods_order = $payment_methods_order;
 
 		wp_cache_add_non_persistent_groups( array( self::PROVIDERS_REQUEST_CACHE_GROUP ) );
 	}
@@ -313,6 +322,40 @@ class Payments {
 				'payment_providers_order_map_updated',
 				array(
 					'order_map' => implode( ', ', array_keys( $this->providers->get_order_map() ) ),
+				)
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Update the canonical checkout payment-method order.
+	 *
+	 * Persists the order chosen on the Payment methods settings page (consumed by the Checkout
+	 * Block) and projects it down to the gateway order option for Classic checkout / legacy
+	 * consumers, keeping both checkout experiences aligned.
+	 *
+	 * @param string[] $order The ordered list of payment-method IDs.
+	 *
+	 * @return bool True if the order was successfully updated, false otherwise.
+	 * @throws \InvalidArgumentException If the submitted order is empty after normalization.
+	 */
+	public function update_payment_method_order( array $order ): bool {
+		$result = $this->payment_methods_order->save( $order );
+
+		if ( $result ) {
+			// Project the canonical order to the gateway order for Classic checkout / legacy consumers.
+			$gateway_order_map = $this->payment_methods_order->build_gateway_order_map( $this->payment_methods_order->get_raw() );
+			if ( ! empty( $gateway_order_map ) ) {
+				$this->update_payment_providers_order_map( $gateway_order_map );
+			}
+
+			// Record an event that the payment-method order was updated.
+			$this->record_event(
+				'payment_method_order_updated',
+				array(
+					'order' => implode( ', ', $this->payment_methods_order->get_raw() ),
 				)
 			);
 		}

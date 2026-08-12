@@ -10,17 +10,13 @@ import {
 	PaymentsExtensionSuggestionProvider,
 } from '@woocommerce/data';
 import { Gridicon } from '@automattic/components';
+import { Fragment } from '@wordpress/element';
 import { useNavigate } from 'react-router-dom';
 import { isRTL } from '@wordpress/i18n';
 
 /**
  * Internal dependencies
  */
-import {
-	DefaultDragHandle,
-	SortableContainer,
-	SortableItem,
-} from '~/settings-payments/components/sortable';
 import { PaymentExtensionSuggestionListItem } from '~/settings-payments/components/payment-extension-suggestion-list-item';
 import { PaymentGatewayListItem } from '~/settings-payments/components/payment-gateway-list-item';
 import './payment-gateway-list.scss';
@@ -62,22 +58,18 @@ interface PaymentGatewayListProps {
 	 */
 	shouldHighlightIncentive: boolean;
 	/**
-	 * Callback to update the ordering of payments providers after sorting.
-	 */
-	updateOrdering: ( providers: PaymentsProvider[] ) => void;
-	/**
 	 * Callback to open or close the onboarding modal.
 	 */
 	setIsOnboardingModalOpen: ( isOpen: boolean ) => void;
 }
 
 /**
- * A component that renders a sortable list of payment providers. Depending on the provider type, it displays
+ * A component that renders the list of payment providers. Depending on the provider type, it displays
  * different components such as `PaymentExtensionSuggestionListItem`, `PaymentGatewayListItem`, or a custom
  * clickable item for offline payment groups.
  *
- * The list supports drag-and-drop reordering and dynamic actions like installing plugins, enabling gateways,
- * and handling incentives.
+ * The list is presentation-only: its order reflects the native provider registration order and is not
+ * reorderable. Checkout payment-method ordering is controlled on the Payment methods settings page.
  */
 export const PaymentGatewayList = ( {
 	providers,
@@ -86,20 +78,14 @@ export const PaymentGatewayList = ( {
 	setUpPlugin,
 	acceptIncentive,
 	shouldHighlightIncentive,
-	updateOrdering,
 	setIsOnboardingModalOpen,
 }: PaymentGatewayListProps ) => {
 	const navigate = useNavigate();
 
 	return (
-		<SortableContainer< PaymentsProvider >
-			items={ providers }
-			className={ 'settings-payment-gateways__list' }
-			setItems={ updateOrdering }
-		>
+		<div className="settings-payment-gateways__list">
 			{ providers.map( ( provider: PaymentsProvider ) => {
 				switch ( provider._type ) {
-					// Return different components wrapped into SortableItem depending on the provider type.
 					case PaymentsProviderType.Suggestion:
 						const suggestion =
 							provider as PaymentsExtensionSuggestionProvider;
@@ -107,10 +93,7 @@ export const PaymentGatewayList = ( {
 							provider.plugin.slug
 						);
 						return (
-							<SortableItem
-								key={ suggestion.id }
-								id={ suggestion.id }
-							>
+							<Fragment key={ suggestion.id }>
 								{ PaymentExtensionSuggestionListItem( {
 									suggestion,
 									installingPlugin,
@@ -119,15 +102,12 @@ export const PaymentGatewayList = ( {
 									acceptIncentive,
 									shouldHighlightIncentive,
 								} ) }
-							</SortableItem>
+							</Fragment>
 						);
 					case PaymentsProviderType.Gateway:
 						const gateway = provider as PaymentGatewayProvider;
 						return (
-							<SortableItem
-								key={ provider.id }
-								id={ provider.id }
-							>
+							<Fragment key={ provider.id }>
 								{ PaymentGatewayListItem( {
 									gateway,
 									installingPlugin,
@@ -135,84 +115,75 @@ export const PaymentGatewayList = ( {
 									shouldHighlightIncentive,
 									setIsOnboardingModalOpen,
 								} ) }
-							</SortableItem>
+							</Fragment>
 						);
 					case PaymentsProviderType.OfflinePmsGroup:
-						// Offline payments item logic is described below.
 						const offlinePmsGroup =
 							provider as OfflinePmsGroupProvider;
 						return (
-							<SortableItem
+							// eslint-disable-next-line jsx-a11y/click-events-have-key-events,jsx-a11y/no-static-element-interactions
+							<div
 								key={ offlinePmsGroup.id }
 								id={ offlinePmsGroup.id }
+								className="transitions-disabled woocommerce-list__item clickable-list-item enter-done"
+								onClick={ () => {
+									navigate(
+										removeOriginFromURL(
+											offlinePmsGroup.management._links
+												.settings.href
+										)
+									);
+								} }
 							>
-								{ /* eslint-disable-next-line jsx-a11y/click-events-have-key-events,jsx-a11y/no-static-element-interactions */ }
-								<div
-									id={ offlinePmsGroup.id }
-									className="transitions-disabled woocommerce-list__item clickable-list-item enter-done"
-									onClick={ () => {
-										navigate(
-											removeOriginFromURL(
-												offlinePmsGroup.management
-													._links.settings.href
-											)
-										);
-									} }
-								>
-									<div className="woocommerce-list__item-inner">
-										<div className="woocommerce-list__item-before">
-											<DefaultDragHandle />
-											<img
-												src={ offlinePmsGroup.icon }
-												alt={
-													offlinePmsGroup.title +
-													' logo'
+								<div className="woocommerce-list__item-inner">
+									<div className="woocommerce-list__item-before">
+										<img
+											src={ offlinePmsGroup.icon }
+											alt={
+												offlinePmsGroup.title + ' logo'
+											}
+										/>
+									</div>
+									<div className="woocommerce-list__item-text">
+										<span className="woocommerce-list__item-title">
+											{ offlinePmsGroup.title }
+										</span>
+										<span
+											className="woocommerce-list__item-content"
+											dangerouslySetInnerHTML={ {
+												__html: offlinePmsGroup.description,
+											} }
+										/>
+									</div>
+									<div className="woocommerce-list__item-after centered no-buttons">
+										<div className="woocommerce-list__item-after__actions">
+											<a
+												className="woocommerce-list__item-after__actions__arrow"
+												href={
+													offlinePmsGroup.management
+														._links.settings.href
 												}
-											/>
-										</div>
-										<div className="woocommerce-list__item-text">
-											<span className="woocommerce-list__item-title">
-												{ offlinePmsGroup.title }
-											</span>
-											<span
-												className="woocommerce-list__item-content"
-												// eslint-disable-next-line react/no-danger -- This string is sanitized by the PaymentGateway class.
-												dangerouslySetInnerHTML={ {
-													__html: offlinePmsGroup.description,
-												} }
-											/>
-										</div>
-										<div className="woocommerce-list__item-after centered no-buttons">
-											<div className="woocommerce-list__item-after__actions">
-												<a
-													className="woocommerce-list__item-after__actions__arrow"
-													href={
-														offlinePmsGroup
-															.management._links
-															.settings.href
+												aria-label={
+													offlinePmsGroup.title
+												}
+											>
+												<Gridicon
+													icon={
+														isRTL()
+															? 'chevron-left'
+															: 'chevron-right'
 													}
-													aria-label={
-														offlinePmsGroup.title
-													}
-												>
-													<Gridicon
-														icon={
-															isRTL()
-																? 'chevron-left'
-																: 'chevron-right'
-														}
-													/>
-												</a>
-											</div>
+												/>
+											</a>
 										</div>
 									</div>
 								</div>
-							</SortableItem>
+							</div>
 						);
 					default:
 						return null;
 				}
 			} ) }
-		</SortableContainer>
+		</div>
 	);
 };
