@@ -35,6 +35,16 @@ type PaymentGatewayItemProps = {
 	acceptIncentive: ( id: string ) => void;
 	shouldHighlightIncentive: boolean;
 	setIsOnboardingModalOpen: ( isOpen: boolean ) => void;
+	/**
+	 * Hide the row's own Manage/Settings button. Used when the row is nested under an extension group
+	 * whose parent already exposes a single Manage button shared by all its children.
+	 */
+	hideSettingsButton?: boolean;
+	/**
+	 * Hide the row's "Official" badge. Used when the row is nested under an extension group whose
+	 * parent already shows the badge for the whole extension.
+	 */
+	hideOfficialBadge?: boolean;
 };
 
 export const PaymentGatewayListItem = ( {
@@ -43,6 +53,8 @@ export const PaymentGatewayListItem = ( {
 	acceptIncentive,
 	shouldHighlightIncentive,
 	setIsOnboardingModalOpen,
+	hideSettingsButton = false,
+	hideOfficialBadge = false,
 	...props
 }: PaymentGatewayItemProps ) => {
 	const itemIsWooPayments = isWooPayments( gateway.id );
@@ -152,7 +164,7 @@ export const PaymentGatewayListItem = ( {
 							/>
 						) }
 						{ /* If the gateway has a matching suggestion, it is an official extension. */ }
-						{ gateway._suggestion_id && (
+						{ gateway._suggestion_id && ! hideOfficialBadge && (
 							<OfficialBadge
 								variant="expanded"
 								suggestionId={ gateway._suggestion_id }
@@ -183,7 +195,6 @@ export const PaymentGatewayListItem = ( {
 					</span>
 					<span
 						className="woocommerce-list__item-content"
-						// eslint-disable-next-line react/no-danger -- This string is sanitized by the PaymentGateway class.
 						dangerouslySetInnerHTML={ sanitizeHTML(
 							decodeEntities( gateway.description )
 						) }
@@ -223,7 +234,7 @@ export const PaymentGatewayListItem = ( {
 								/>
 							) }
 
-						{ ! gatewayNeedsOnboarding && (
+						{ ! gatewayNeedsOnboarding && ! hideSettingsButton && (
 							<SettingsButton
 								gatewayProvider={ gateway }
 								settingsHref={

@@ -186,6 +186,55 @@
 			margin-left: auto;
 		}
 	}
+
+	// The chevron control that discloses an extension group's gateways. Sized to the ellipsis menu
+	// beside it so the row's trailing controls stay aligned.
+	.settings-payment-gateways__expander.components-button {
+		min-width: 32px;
+		height: 32px;
+		padding: 0;
+		justify-content: center;
+		color: $gray-900;
+	}
+
+	// An extension group is a plain block wrapper: its header row sits on top and the nested gateway
+	// rows stack below it. It must not pick up the flex layout the shared list-item class carries,
+	// which would put the header and the children side by side. The wrapper carries the group's
+	// single closing divider, so the group is separated from whatever follows whether it is collapsed
+	// (line after the header) or expanded (line after the last child) — the nested header is no longer
+	// a direct list child, so it cannot rely on the shared list separator.
+	.settings-payment-gateways__extension-group {
+		display: block;
+		border-bottom: 1px solid $gray-200;
+	}
+
+	// The parent header only carries a logo, a title, and the trailing controls, so center them
+	// rather than top-aligning as the taller gateway rows do.
+	.settings-payment-gateways__extension-group-header .woocommerce-list__item-inner {
+		align-items: center;
+	}
+
+	// The nested gateway rows of an extension group, indented so they read as belonging to the parent
+	// above them. Each child is a full provider row (already padded by 48px), so the extra inline-start
+	// padding is just the parent's logo column, lining the child logo up under the parent title. The
+	// vertical padding is tightened so the children read as a compact block.
+	.settings-payment-gateways__extension-group-children .woocommerce-list__item-inner {
+		padding-block: $gap-small;
+		padding-inline-start: calc(40px + #{$gap});
+	}
+
+	// The children read as one block under their parent, so drop the dividers between them. The shared
+	// list component draws them with border-top on every row but the first.
+	.settings-payment-gateways__extension-group-children .woocommerce-list__item {
+		border-top: none;
+		border-bottom: none;
+	}
+
+	// No divider between the parent header and its first child either — the group reads as one unit.
+	// The wrapper's border-bottom is the group's only divider, so the header carries none.
+	.settings-payment-gateways__extension-group-header {
+		border-bottom: none;
+	}
 }
 
 @media screen and ( max-width: $break-xlarge ) {

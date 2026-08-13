@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Group Payments providers rows that come from the same extension under one expandable parent row.
