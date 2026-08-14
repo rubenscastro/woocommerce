@@ -28,7 +28,49 @@ import {
 	recordPaymentsEvent,
 	removeOriginFromURL,
 } from '~/settings-payments/utils';
-import { groupProvidersByExtension } from '~/settings-payments/group-providers-by-extension';
+import {
+	groupProvidersByExtension,
+	type ProviderGroup,
+} from '~/settings-payments/group-providers-by-extension';
+
+/**
+ * Whether a gateway still needs setup — its account is not connected, or onboarding was never started
+ * or never completed, or it is disabled and flagged as needing setup.
+ *
+ * Mirrors the `needs_setup`/onboarding logic `PaymentGatewayListItem` uses to pick a row status, read
+ * from the same provider state fields, so "needs setup" means the same thing here as on the row.
+ */
+const gatewayNeedsSetup = ( gateway: PaymentGatewayProvider ): boolean => {
+	const state = gateway.state;
+
+	// Without state we cannot tell whether setup is complete, so stay conservative and do not
+	// force-expand on unknown data.
+	if ( ! state ) {
+		return false;
+	}
+
+	const connected = state.account_connected;
+	const started = gateway.onboarding?.state?.started;
+	const completed = gateway.onboarding?.state?.completed;
+
+	const needsOnboarding =
+		! connected ||
+		( connected && ! started ) ||
+		( connected && started && ! completed );
+
+	return needsOnboarding || ( ! state.enabled && state.needs_setup );
+};
+
+/**
+ * Whether a grouped provider should be expanded by default.
+ *
+ * A provider that is installed (its gateways are registered), has child payment-method rows (a group
+ * always does), and has not finished setup is expanded so the merchant can see what still needs
+ * attention. Fully configured providers are left at the default collapsed state. Derived from live
+ * provider state, never from provider names.
+ */
+const groupExpandedByDefault = ( group: ProviderGroup ): boolean =>
+	group.children.some( gatewayNeedsSetup );
 
 interface PaymentGatewayListProps {
 	/**
@@ -113,23 +155,28 @@ export const PaymentGatewayList = ( {
 		[ providers, suggestionsById ]
 	);
 
-	// Which extension groups are expanded. UI-only state; nothing is persisted, and several groups can
-	// be open at once.
-	const [ expandedGroups, setExpandedGroups ] = useState<
+	// The merchant's explicit expand/collapse choices, keyed by group id. UI-only state; nothing is
+	// persisted. A group with no entry here falls back to its data-derived default (expanded when it
+	// still needs setup), so the default stays correct even as provider data loads in asynchronously.
+	const [ expandedOverrides, setExpandedOverrides ] = useState<
 		Record< string, boolean >
 	>( {} );
 
-	const toggleGroupExpanded = ( groupId: string ) => {
-		setExpandedGroups( ( previous ) => {
-			const next = ! previous[ groupId ];
+	const isGroupExpanded = ( group: ProviderGroup ): boolean =>
+		expandedOverrides[ group.id ] ?? groupExpandedByDefault( group );
 
-			recordPaymentsEvent( 'provider_extension_group_toggle', {
-				extension_group: groupId,
-				action: next ? 'expand' : 'collapse',
-			} );
+	const toggleGroupExpanded = ( group: ProviderGroup ) => {
+		const next = ! isGroupExpanded( group );
 
-			return { ...previous, [ groupId ]: next };
+		recordPaymentsEvent( 'provider_extension_group_toggle', {
+			extension_group: group.id,
+			action: next ? 'expand' : 'collapse',
 		} );
+
+		setExpandedOverrides( ( previous ) => ( {
+			...previous,
+			[ group.id ]: next,
+		} ) );
 	};
 
 	const renderProvider = ( provider: PaymentsProvider ) => {
@@ -235,9 +282,9 @@ export const PaymentGatewayList = ( {
 					<PaymentGatewayGroupItem
 						key={ item.group.id }
 						group={ item.group }
-						isExpanded={ !! expandedGroups[ item.group.id ] }
+						isExpanded={ isGroupExpanded( item.group ) }
 						onToggleExpanded={ () =>
-							toggleGroupExpanded( item.group.id )
+							toggleGroupExpanded( item.group )
 						}
 						installingPlugin={ installingPlugin }
 						acceptIncentive={ acceptIncentive }

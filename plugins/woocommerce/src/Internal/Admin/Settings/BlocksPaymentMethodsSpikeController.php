@@ -54,6 +54,27 @@ class BlocksPaymentMethodsSpikeController {
 	private const BLOCKS_DATA_HANDLE = 'wc-blocks-data-store';
 
 	/**
+	 * The payments providers service, used only to read the canonical provider brand name.
+	 *
+	 * Optional: resolved lazily by the DI container. When absent the provider label degrades to the
+	 * owning plugin's header name, so nothing here hard-depends on the service.
+	 *
+	 * @var PaymentsProviders|null
+	 */
+	private ?PaymentsProviders $payment_providers = null;
+
+	/**
+	 * Initialize the controller's dependencies.
+	 *
+	 * @internal
+	 *
+	 * @param PaymentsProviders $payment_providers The payments providers service.
+	 */
+	final public function init( PaymentsProviders $payment_providers ): void {
+		$this->payment_providers = $payment_providers;
+	}
+
+	/**
 	 * Register hooks.
 	 */
 	public function register(): void {
@@ -63,16 +84,33 @@ class BlocksPaymentMethodsSpikeController {
 	}
 
 	/**
-	 * Enqueue the Checkout Block payment method scripts on the Payment methods settings section.
+	 * Publish the spike data for whichever Payments settings screen is being rendered.
 	 *
-	 * Everything here is scoped to that one section, so no other admin screen and no front-end
+	 * The Payment methods section is the primary consumer: it enqueues the Checkout Block payment
+	 * method scripts (so the client registry is populated) and publishes the full payload. The main
+	 * Payments providers landing page reuses only the duplicate-detection metadata — the same server
+	 * source of truth — to show the duplicate notice and open the same resolution modal, without
+	 * enqueuing any third-party scripts on that higher-traffic page.
+	 *
+	 * Everything here is scoped to those two screens, so no other admin screen and no front-end
 	 * request is affected.
 	 */
 	public function enqueue_payment_method_scripts(): void {
-		if ( ! $this->is_payment_methods_section() ) {
+		if ( $this->is_payment_methods_section() ) {
+			$this->enqueue_and_publish_for_methods_page();
 			return;
 		}
 
+		if ( $this->is_main_providers_section() ) {
+			$this->publish_duplicates_for_providers_page();
+		}
+	}
+
+	/**
+	 * Enqueue the Checkout Block payment method scripts and publish the full payload on the Payment
+	 * methods section.
+	 */
+	private function enqueue_and_publish_for_methods_page(): void {
 		if ( ! wp_script_is( self::ADMIN_SCRIPT_HANDLE, 'registered' ) ) {
 			return;
 		}
@@ -146,32 +184,7 @@ class BlocksPaymentMethodsSpikeController {
 			// Discovery above is generic. This is the one piece of gateway-specific knowledge, and
 			// it answers a question the registry cannot: whether a provider's methods are its own
 			// to render. See StripeOptimizedCheckoutAdapter.
-			if ( ! $asset_registry->exists( self::ASSET_DATA_KEY ) ) {
-				$grouped_providers = ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers();
-				// Duplicate detection is a separate metadata layer: it annotates the methods
-				// discovered above, and never adds, removes or reveals a row.
-				$duplicates = ( new PaymentMethodDuplicatesDetector() )->detect();
-				$context    = $this->get_provider_context( $payment_method_registry );
-
-				$asset_registry->add(
-					self::ASSET_DATA_KEY,
-					array_merge(
-						array(
-							'groupedProviders'   => $grouped_providers,
-							'duplicates'         => $duplicates,
-							// The provider options the resolution modal offers per resolvable duplicate.
-							// Only regular methods the representation surfaces individually appear here.
-							'duplicateProviders' => $this->get_duplicate_providers(
-								$duplicates['payment_methods'],
-								$grouped_providers,
-								$context['gatewayPlugins'],
-								$context['providerIcons']
-							),
-						),
-						$context
-					)
-				);
-			}
+			$this->publish_spike_data( $asset_registry, $payment_method_registry );
 		} catch ( Throwable $e ) {
 			// A third-party integration can throw while resolving its script handles. Never let
 			// that take down the settings page.
@@ -179,6 +192,94 @@ class BlocksPaymentMethodsSpikeController {
 				'Could not load the Checkout Block payment method scripts: ' . $e->getMessage(),
 				array( 'source' => 'settings-payments' )
 			);
+		}
+	}
+
+	/**
+	 * Publish the duplicate-detection metadata on the main Payments providers landing page.
+	 *
+	 * Reuses the same server-side detection and resolvable-candidate model the methods page uses —
+	 * one source of truth — but does not enqueue any payment method scripts. The metadata, the
+	 * resolvable candidates, and the pre-resolved method icons/labels are all computed server-side,
+	 * so the providers page can render the duplicate notice and open the same modal without the
+	 * client-side payment-method registry.
+	 */
+	private function publish_duplicates_for_providers_page(): void {
+		if ( ! class_exists( Package::class ) ) {
+			return;
+		}
+
+		try {
+			$container = Package::container();
+
+			/**
+			 * The Blocks payment method registry.
+			 *
+			 * @var PaymentMethodRegistry $payment_method_registry
+			 */
+			$payment_method_registry = $container->get( PaymentMethodRegistry::class );
+			$asset_registry          = $container->get( AssetDataRegistry::class );
+
+			$this->publish_spike_data( $asset_registry, $payment_method_registry );
+		} catch ( Throwable $e ) {
+			// Advisory metadata only; never let it take down the providers page.
+			wc_get_logger()->error(
+				'Could not publish payment method duplicate metadata: ' . $e->getMessage(),
+				array( 'source' => 'settings-payments' )
+			);
+		}
+	}
+
+	/**
+	 * Assemble and publish the spike payload under {@see self::ASSET_DATA_KEY}.
+	 *
+	 * Idempotent: does nothing when the key is already present (the methods page publishes it first
+	 * when both code paths would run in one request). The grouped-providers representation, the
+	 * duplicate metadata, and the resolvable duplicate candidates (with their pre-resolved method
+	 * icon/label and provider brand) are all derived here so both consuming pages read identical data.
+	 *
+	 * @param AssetDataRegistry     $asset_registry          The Blocks asset data registry.
+	 * @param PaymentMethodRegistry $payment_method_registry The Blocks payment method registry.
+	 */
+	private function publish_spike_data( AssetDataRegistry $asset_registry, PaymentMethodRegistry $payment_method_registry ): void {
+		if ( $asset_registry->exists( self::ASSET_DATA_KEY ) ) {
+			return;
+		}
+
+		$grouped_providers = ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers();
+		// Duplicate detection is a separate metadata layer: it annotates the methods discovered
+		// above, and never adds, removes or reveals a row.
+		$duplicates = ( new PaymentMethodDuplicatesDetector() )->detect();
+		$context    = $this->get_provider_context( $payment_method_registry );
+
+		$duplicate_providers = $this->get_duplicate_providers(
+			$duplicates['payment_methods'],
+			$grouped_providers,
+			$context['gatewayPlugins'],
+			$context['providerIcons'],
+			$context['methodIcons']
+		);
+
+		$asset_registry->add(
+			self::ASSET_DATA_KEY,
+			array_merge(
+				array(
+					'groupedProviders'   => $grouped_providers,
+					'duplicates'         => $duplicates,
+					// The provider options the resolution modal offers per resolvable duplicate.
+					// Only regular methods the representation surfaces individually appear here.
+					'duplicateProviders' => $duplicate_providers,
+				),
+				$context
+			)
+		);
+
+		// The Blocks asset-data registry only prints its published data when the `wc-settings` script is
+		// enqueued. The methods page pulls that in through the payment-method scripts it enqueues; the
+		// providers page enqueues none, so ensure it here when there is a duplicate notice to surface —
+		// otherwise the data would be stored but never reach the client. No-op if already enqueued.
+		if ( ! empty( $duplicate_providers ) && wp_script_is( 'wc-settings', 'registered' ) ) {
+			wp_enqueue_script( 'wc-settings' );
 		}
 	}
 
@@ -204,6 +305,31 @@ class BlocksPaymentMethodsSpikeController {
 		return 'wc-settings' === $page
 			&& WC_Settings_Payment_Gateways::TAB_NAME === $tab
 			&& WC_Settings_Payment_Gateways::PAYMENT_METHODS_SECTION_NAME === $section;
+	}
+
+	/**
+	 * Check whether the current request is the main Payments providers landing page.
+	 *
+	 * That page is the `checkout` tab with either no section or the explicit `main` section — the same
+	 * screen `WC_Settings_Payment_Gateways` treats as its default. The other named sections (offline,
+	 * the individual offline methods, and the payment-methods reorder screen) are excluded.
+	 *
+	 * @return bool
+	 */
+	private function is_main_providers_section(): bool {
+		if ( ! is_admin() ) {
+			return false;
+		}
+
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- Only used to determine which admin screen is being rendered.
+		$page    = isset( $_GET['page'] ) ? wc_clean( wp_unslash( $_GET['page'] ) ) : '';
+		$tab     = isset( $_GET['tab'] ) ? wc_clean( wp_unslash( $_GET['tab'] ) ) : '';
+		$section = isset( $_GET['section'] ) ? wc_clean( wp_unslash( $_GET['section'] ) ) : '';
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+
+		return 'wc-settings' === $page
+			&& WC_Settings_Payment_Gateways::TAB_NAME === $tab
+			&& ( '' === $section || WC_Settings_Payment_Gateways::MAIN_SECTION_NAME === $section );
 	}
 
 	/**
@@ -279,19 +405,24 @@ class BlocksPaymentMethodsSpikeController {
 	 *
 	 * Reuses the representation authority ({@see DuplicateResolutionCandidates} over the grouped
 	 * providers) so only implementations surfaced as individual regular methods are offered — Stripe's
-	 * Optimized-Checkout children never appear here. Provider identity reuses the existing attribution
-	 * (`gatewayPlugins` + `providerIcons`); the provider label is the owning plugin's name, kept
-	 * deliberately separate from any gateway/method title (a gateway's method title can carry the method
-	 * name, e.g. WooPayments' card gateway reads "WooPayments (Card)").
+	 * Optimized-Checkout children never appear here.
+	 *
+	 * Each canonical carries a pre-resolved `methodLabel` and `methodIcon` describing the payment
+	 * *method* (the row's identity — e.g. the generic Card icon for `card`, never a provider logo) so
+	 * the modal can render without the client-side payment-method registry, which the providers page
+	 * does not load. Each implementation carries the *provider* brand: `providerLabel` reuses the same
+	 * canonical brand the providers list shows (the matched payment-extension suggestion title, e.g.
+	 * "Stripe"), falling back to the owning plugin's header name when no suggestion matches.
 	 *
 	 * @param array<string, string[]>                                                                                           $regular_groups   The detector's `payment_methods` output.
 	 * @param array<string, array{childGatewayIds: string[], showChildren: bool, optimizedCheckout: bool, settingsUrl: string}> $grouped_providers The grouped-providers representation.
 	 * @param array<string, string>                                                                                             $gateway_plugins  Gateway id => owning plugin slug.
 	 * @param array<string, string>                                                                                             $provider_icons   Plugin slug => provider logo URL.
+	 * @param array<string, string>                                                                                             $method_icons     Bundled method icon slug => URL (square set).
 	 *
-	 * @return array<string, array{implementations: array<int, array{gatewayId: string, providerSlug: string, providerLabel: string, providerIcon: string, canDisable: bool}>, requiredKeepGatewayId: string|null}>
+	 * @return array<string, array{methodLabel: string, methodIcon: string, implementations: array<int, array{gatewayId: string, providerSlug: string, providerLabel: string, providerIcon: string, canDisable: bool}>, requiredKeepGatewayId: string|null}>
 	 */
-	private function get_duplicate_providers( array $regular_groups, array $grouped_providers, array $gateway_plugins, array $provider_icons ): array {
+	private function get_duplicate_providers( array $regular_groups, array $grouped_providers, array $gateway_plugins, array $provider_icons, array $method_icons = array() ): array {
 		try {
 			$resolvable = ( new DuplicateResolutionCandidates() )->compute( $regular_groups, $grouped_providers )['resolvable'];
 
@@ -310,6 +441,7 @@ class BlocksPaymentMethodsSpikeController {
 			$duplicate_providers = array();
 
 			foreach ( $candidates as $canonical_id => $candidate ) {
+				$canonical_id    = (string) $canonical_id;
 				$implementations = array();
 
 				foreach ( $candidate['implementations'] as $implementation ) {
@@ -319,13 +451,15 @@ class BlocksPaymentMethodsSpikeController {
 					$implementations[] = array(
 						'gatewayId'     => $gateway_id,
 						'providerSlug'  => $plugin_slug,
-						'providerLabel' => $this->get_provider_label( $plugin_slug, $plugin_names ),
+						'providerLabel' => $this->get_provider_brand_label( $plugin_slug, $plugin_names ),
 						'providerIcon'  => '' !== $plugin_slug ? ( $provider_icons[ $plugin_slug ] ?? '' ) : '',
 						'canDisable'    => $implementation['canDisable'],
 					);
 				}
 
-				$duplicate_providers[ (string) $canonical_id ] = array(
+				$duplicate_providers[ $canonical_id ] = array(
+					'methodLabel'           => $this->get_canonical_method_label( $canonical_id ),
+					'methodIcon'            => $this->get_canonical_method_icon( $canonical_id, $method_icons ),
 					'implementations'       => $implementations,
 					'requiredKeepGatewayId' => $candidate['requiredKeepGatewayId'],
 				);
@@ -336,6 +470,90 @@ class BlocksPaymentMethodsSpikeController {
 			// Provider options are advisory; a misbehaving gateway must not break discovery.
 			return array();
 		}
+	}
+
+	/**
+	 * A readable method name for a canonical duplicate id.
+	 *
+	 * The canonical id is the method's stable identity from the detector (`card`, `klarna`, `ideal`…),
+	 * so a humanised form of it names the *method* independently of any provider. This is a method
+	 * label, not a provider brand, so plain humanisation is appropriate here (unlike provider names,
+	 * which come from canonical provider metadata).
+	 *
+	 * @param string $canonical_id The canonical method id.
+	 *
+	 * @return string
+	 */
+	private function get_canonical_method_label( string $canonical_id ): string {
+		$label = ucwords( str_replace( array( '-', '_' ), ' ', $canonical_id ) );
+
+		return '' !== $label ? $label : $canonical_id;
+	}
+
+	/**
+	 * The bundled icon that represents a canonical payment *method*, never a provider logo.
+	 *
+	 * Follows payment-method identity: the icon is chosen from the canonical method id against the same
+	 * bundled square set the methods page uses. Card resolves to the generic payment-card icon
+	 * (`generic`, which is a card artwork), so Stripe's Card is shown with a Card icon rather than the
+	 * Stripe provider logo; other canonicals match their like-named bundled icon (klarna, ideal, …) and
+	 * fall back to the generic card icon when there is no closer match.
+	 *
+	 * @param string                $canonical_id The canonical method id.
+	 * @param array<string, string> $method_icons Bundled method icon slug => URL (square set).
+	 *
+	 * @return string The icon URL, or an empty string when the bundled set is unavailable.
+	 */
+	private function get_canonical_method_icon( string $canonical_id, array $method_icons ): string {
+		// The generic card artwork stands in for Card and as the ultimate fallback for any method
+		// without a like-named bundled icon.
+		$generic = $method_icons['generic'] ?? '';
+
+		if ( 'card' === $canonical_id ) {
+			return $generic;
+		}
+
+		$slug = str_replace( array( '-', '_' ), '', $canonical_id );
+
+		return $method_icons[ $canonical_id ] ?? ( $method_icons[ $slug ] ?? $generic );
+	}
+
+	/**
+	 * The merchant-facing provider brand for a plugin slug.
+	 *
+	 * Reuses the same canonical brand the Payments providers list shows: the matched payment-extension
+	 * suggestion's title (e.g. the Stripe gateway plugin resolves to "Stripe", not the plugin header
+	 * "WooCommerce Stripe Gateway"). See {@see PaymentsProviders::enhance_payment_gateway_details()},
+	 * which hoists that same suggestion title onto each provider row. Falls back to the owning plugin's
+	 * header name when there is no matching suggestion (or the providers service is unavailable), so an
+	 * unknown provider still gets a readable label.
+	 *
+	 * @param string                $plugin_slug  The owning plugin directory slug.
+	 * @param array<string, string> $plugin_names Plugin directory slug => plugin header name.
+	 *
+	 * @return string
+	 */
+	private function get_provider_brand_label( string $plugin_slug, array $plugin_names ): string {
+		if ( '' === $plugin_slug ) {
+			return '';
+		}
+
+		if ( null !== $this->payment_providers ) {
+			try {
+				// The suggestions are keyed by the normalized (official) plugin slug, so normalize the
+				// gateway's directory slug the same way the providers service does before matching.
+				$suggestion = $this->payment_providers->get_extension_suggestion_by_plugin_slug( Utils::normalize_plugin_slug( $plugin_slug ) );
+
+				if ( is_array( $suggestion ) && ! empty( $suggestion['title'] ) ) {
+					return (string) $suggestion['title'];
+				}
+			} catch ( Throwable $e ) {
+				// Fall through to the plugin-header name below.
+				$suggestion = null;
+			}
+		}
+
+		return $this->get_provider_label( $plugin_slug, $plugin_names );
 	}
 
 	/**

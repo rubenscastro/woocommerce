@@ -85,7 +85,15 @@ jest.mock(
 	} )
 );
 
-const gateway = ( id: string, suggestionId: string ): PaymentsProvider =>
+const gateway = (
+	id: string,
+	suggestionId: string,
+	state?: Partial< {
+		account_connected: boolean;
+		enabled: boolean;
+		needs_setup: boolean;
+	} >
+): PaymentsProvider =>
 	( {
 		id,
 		_type: 'gateway',
@@ -98,6 +106,19 @@ const gateway = ( id: string, suggestionId: string ): PaymentsProvider =>
 			status: 'active',
 		},
 		management: { _links: { settings: { href: `/s/${ id }` } } },
+		...( state
+			? {
+					state: {
+						account_connected: true,
+						enabled: true,
+						needs_setup: false,
+						...state,
+					},
+					onboarding: {
+						state: { started: true, completed: true },
+					},
+			  }
+			: {} ),
 	} ) as unknown as PaymentsProvider;
 
 const defaultProps = {
@@ -131,6 +152,82 @@ describe( 'PaymentGatewayList', () => {
 		expect( group ).toHaveAttribute( 'data-child-count', '2' );
 		expect( group ).toHaveAttribute( 'data-expanded', 'false' );
 		expect( screen.getByTestId( 'single-stripe' ) ).toBeInTheDocument();
+	} );
+
+	it( 'expands a group by default when a child still needs setup', () => {
+		render(
+			<PaymentGatewayList
+				providers={ [
+					gateway( 'ppcp_blik', 'paypal', {
+						account_connected: false,
+					} ),
+					gateway( 'ppcp_eps', 'paypal', {
+						account_connected: true,
+					} ),
+				] }
+				{ ...defaultProps }
+			/>
+		);
+
+		// account_connected is false for one child, so the whole group opens to surface it.
+		expect( screen.getByTestId( 'group-paypal' ) ).toHaveAttribute(
+			'data-expanded',
+			'true'
+		);
+	} );
+
+	it( 'leaves a fully configured group collapsed by default', () => {
+		render(
+			<PaymentGatewayList
+				providers={ [
+					gateway( 'ppcp_blik', 'paypal', {
+						account_connected: true,
+					} ),
+					gateway( 'ppcp_eps', 'paypal', {
+						account_connected: true,
+					} ),
+				] }
+				{ ...defaultProps }
+			/>
+		);
+
+		expect( screen.getByTestId( 'group-paypal' ) ).toHaveAttribute(
+			'data-expanded',
+			'false'
+		);
+	} );
+
+	it( 'lets the merchant collapse a group that auto-expanded', () => {
+		render(
+			<PaymentGatewayList
+				providers={ [
+					gateway( 'ppcp_blik', 'paypal', {
+						account_connected: false,
+					} ),
+					gateway( 'ppcp_eps', 'paypal', {
+						account_connected: false,
+					} ),
+				] }
+				{ ...defaultProps }
+			/>
+		);
+
+		expect( screen.getByTestId( 'group-paypal' ) ).toHaveAttribute(
+			'data-expanded',
+			'true'
+		);
+
+		// A merchant toggle overrides the data-derived default.
+		fireEvent.click( screen.getByTestId( 'group-paypal' ) );
+
+		expect( screen.getByTestId( 'group-paypal' ) ).toHaveAttribute(
+			'data-expanded',
+			'false'
+		);
+		expect( recordPaymentsEvent ).toHaveBeenCalledWith(
+			'provider_extension_group_toggle',
+			{ extension_group: 'paypal', action: 'collapse' }
+		);
 	} );
 
 	it( 'toggles a group and records the analytics event', () => {

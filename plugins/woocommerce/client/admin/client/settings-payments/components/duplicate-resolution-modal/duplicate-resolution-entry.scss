@@ -1,0 +1,19 @@
+// Styles for the shared duplicate warning notice. Kept here (not in a page stylesheet) so the notice
+// looks the same on every page that hosts it — the Payment methods page and the Payment providers
+// page — since the entry component is what loads this file.
+
+// Actions inside the "Resolve duplicate payment methods" notice.
+.settings-payments-methods__duplicate-notice-actions {
+	display: flex;
+	gap: var(--wpds-dimension-gap-sm);
+	margin-top: var(--wpds-dimension-gap-sm);
+}
+
+// The notice as placed at the top of the Payment providers list.
+.settings-payments-main__duplicate-notice {
+	margin-bottom: var(--wpds-dimension-gap-md);
+
+	.components-notice {
+		margin: 0;
+	}
+}

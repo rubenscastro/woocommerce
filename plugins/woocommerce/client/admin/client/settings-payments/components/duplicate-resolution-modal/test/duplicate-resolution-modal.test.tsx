@@ -197,10 +197,35 @@ describe( 'DuplicateResolutionModal', () => {
 		expect( apply ).toBeEnabled();
 	} );
 
-	it( 'submits the chosen selections and reloads on success', async () => {
+	it( 'submits the chosen selections, shows the server diagnostic, and reloads on Done', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: true,
-			results: [],
+			results: [
+				{
+					canonicalId: 'card',
+					kept: 'woocommerce_payments',
+					disabled: [
+						{
+							gatewayId: 'stripe',
+							status: 'disabled',
+							message: '',
+						},
+					],
+					error: null,
+				},
+				{
+					canonicalId: 'klarna',
+					kept: 'woocommerce_payments_klarna',
+					disabled: [
+						{
+							gatewayId: 'stripe_klarna',
+							status: 'disabled',
+							message: '',
+						},
+					],
+					error: null,
+				},
+			],
 			duplicates: {},
 		} );
 		setDispatch( resolve );
@@ -222,10 +247,23 @@ describe( 'DuplicateResolutionModal', () => {
 			card: 'woocommerce_payments',
 			klarna: 'woocommerce_payments_klarna',
 		} );
+
+		// The diagnostic reflects the server report: what was kept and what was disabled, per method.
+		const doneButton = await screen.findByRole( 'button', {
+			name: 'Done',
+		} );
+		expect( screen.getAllByText( /— kept/ ).length ).toBeGreaterThan( 0 );
+		expect( screen.getAllByText( /— disabled/ ).length ).toBeGreaterThan(
+			0
+		);
+		// It does not reload until the merchant closes the diagnostic.
+		expect( reloadMock ).not.toHaveBeenCalled();
+
+		await userEvent.click( doneButton );
 		await waitFor( () => expect( reloadMock ).toHaveBeenCalled() );
 	} );
 
-	it( 'lists the methods that failed and does not reload when resolution is unsuccessful', async () => {
+	it( 'surfaces the per-target failure in the diagnostic and does not reload when resolution is unsuccessful', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: false,
 			results: [
@@ -259,10 +297,10 @@ describe( 'DuplicateResolutionModal', () => {
 			screen.getByRole( 'button', { name: 'Apply' } )
 		);
 
-		// The error names the affected method and the provider it failed for.
+		// The diagnostic surfaces the real per-target failure reason, not a generic message.
 		await waitFor( () =>
 			expect(
-				screen.getAllByText( /Klarna \(Stripe\)/ ).length
+				screen.getAllByText( /failed: boom/ ).length
 			).toBeGreaterThan( 0 )
 		);
 		expect( reloadMock ).not.toHaveBeenCalled();

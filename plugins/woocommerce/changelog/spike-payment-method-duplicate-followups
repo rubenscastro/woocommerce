@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Payment methods/providers duplicate follow-ups: surface the duplicate warning + resolution modal on the Payment providers page from the same server-detected state; auto-expand providers that still need setup; render the Duplicated badge on the actual nested child method; show the merchant-facing provider brand (e.g. "Stripe") and the generic Card icon in the modal; and add a temporary post-resolution diagnostic view reflecting the server report.
