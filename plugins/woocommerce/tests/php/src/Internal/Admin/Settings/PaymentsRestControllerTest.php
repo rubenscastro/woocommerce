@@ -474,7 +474,8 @@ class PaymentsRestControllerTest extends WC_Unit_Test_Case {
 		$this->mock_extension_suggestions( 'LI' );
 		$this->mock_extension_suggestions_categories();
 
-		update_option( 'woocommerce_default_country', 'LI' ); // Liechtenstein.
+		update_option( 'woocommerce_default_country', 'LI' );
+		// Liechtenstein.
 
 		// Act.
 		$request  = new WP_REST_Request( 'POST', self::ENDPOINT . '/providers' );
@@ -573,24 +574,36 @@ class PaymentsRestControllerTest extends WC_Unit_Test_Case {
 			array( array( WC_Gateway_Paypal::ID => false ) ),
 			array( array( WC_Gateway_Paypal::ID => 'bogus' ) ),
 			array( array( WC_Gateway_Paypal::ID => '1.0' ) ),
-			array( array( 'pay@pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay/pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay(pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay)pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay&pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay$pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'pay#pal' => 1 ) ), // Invalid provider ID with not allowed characters.
-			array( array( 'páypäl' => 1 ) ), // Invalid provider ID with accented characters.
-			array( array( '<script></script>paypal<a></a>' => 1 ) ), // Invalid provider ID with HTML tags.
-			array( array( '&nbsp;paypal&lt;' => 1 ) ), // Invalid provider ID with HTML entities.
-			array( array( 'pay&#60;pal' => 1 ) ), // Invalid provider ID with HTML entities.
-			array( array( '%2Fpay%3Apal' => 1 ) ), // Invalid provider ID with percent encoded characters.
-			array(
-				array(
-					WC_Gateway_Paypal::ID     => '1.1',
-					'offline_payment_methods' => 2,
-				),
-			),
+			array( array( 'pay@pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay/pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay(pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay)pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay&pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay$pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'pay#pal' => 1 ) ),
+			// Invalid provider ID with not allowed characters.
+							array( array( 'páypäl' => 1 ) ),
+			// Invalid provider ID with accented characters.
+							array( array( '<script></script>paypal<a></a>' => 1 ) ),
+			// Invalid provider ID with HTML tags.
+							array( array( '&nbsp;paypal&lt;' => 1 ) ),
+			// Invalid provider ID with HTML entities.
+							array( array( 'pay&#60;pal' => 1 ) ),
+			// Invalid provider ID with HTML entities.
+							array( array( '%2Fpay%3Apal' => 1 ) ),
+			// Invalid provider ID with percent encoded characters.
+							array(
+								array(
+									WC_Gateway_Paypal::ID => '1.1',
+									'offline_payment_methods' => 2,
+								),
+							),
 			array(
 				array(
 					WC_Gateway_Paypal::ID     => '0.1',
@@ -681,7 +694,8 @@ class PaymentsRestControllerTest extends WC_Unit_Test_Case {
 		$request->set_body_params(
 			array(
 				'order_map' => array(
-					'Provider_01-1_AHA' => 1, // uppercase characters are allowed.
+					'Provider_01-1_AHA' => 1,
+			// uppercase characters are allowed.
 				),
 			)
 		);
@@ -906,6 +920,93 @@ class PaymentsRestControllerTest extends WC_Unit_Test_Case {
 		$response = $this->server->dispatch( $request );
 
 		// Assert.
+		$this->assertSame( rest_authorization_required_code(), $response->get_status() );
+	}
+
+	/**
+	 * @testdox Should forward the duplicate-resolution selections to the service and return its report.
+	 */
+	public function test_resolve_payment_method_duplicates_success() {
+		$report = array(
+			'success'    => true,
+			'results'    => array(
+				array(
+					'canonicalId' => 'klarna',
+					'kept'        => 'foo_klarna',
+					'disabled'    => array(
+						array(
+							'gatewayId' => 'bar_klarna',
+							'status'    => 'disabled',
+							'message'   => '',
+						),
+					),
+					'error'       => null,
+				),
+			),
+			'duplicates' => array(
+				'payment_methods' => array(),
+				'express'         => array(),
+			),
+		);
+
+		$this->mock_service
+			->expects( $this->once() )
+			->method( 'resolve_payment_method_duplicates' )
+			->with( array( 'klarna' => 'foo_klarna' ) )
+			->willReturn( $report );
+
+		$request = new WP_REST_Request( 'POST', self::ENDPOINT . '/payment-methods/duplicates/resolve' );
+		$request->set_body_params(
+			array(
+				'selections' => array( 'klarna' => 'foo_klarna' ),
+			)
+		);
+		$response = $this->server->dispatch( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertTrue( $response->get_data()['success'] );
+		$this->assertArrayHasKey( 'duplicates', $response->get_data() );
+	}
+
+	/**
+	 * @testdox Should reject a malformed selections payload with a 400 and not call the service.
+	 */
+	public function test_resolve_payment_method_duplicates_rejects_malformed() {
+		$this->mock_service
+			->expects( $this->never() )
+			->method( 'resolve_payment_method_duplicates' );
+
+		// An empty gateway id for a canonical method is not a valid selection.
+		$request = new WP_REST_Request( 'POST', self::ENDPOINT . '/payment-methods/duplicates/resolve' );
+		$request->set_body_params(
+			array(
+				'selections' => array( 'klarna' => '' ),
+			)
+		);
+		$response = $this->server->dispatch( $request );
+
+		$this->assertSame( 400, $response->get_status() );
+	}
+
+	/**
+	 * @testdox Should reject duplicate resolution by a user without the proper capabilities.
+	 */
+	public function test_resolve_payment_method_duplicates_user_without_caps() {
+		$user_id = $this->factory->user->create( array( 'role' => 'editor' ) );
+		wp_set_current_user( $user_id );
+
+		$this->mock_service
+			->expects( $this->never() )
+			->method( 'resolve_payment_method_duplicates' );
+
+		$request = new WP_REST_Request( 'POST', self::ENDPOINT . '/payment-methods/duplicates/resolve' );
+		$request->set_body_params(
+			array(
+				'selections' => array( 'klarna' => 'foo_klarna' ),
+			)
+		);
+		$response = $this->server->dispatch( $request );
+
 		$this->assertSame( rest_authorization_required_code(), $response->get_status() );
 	}
 

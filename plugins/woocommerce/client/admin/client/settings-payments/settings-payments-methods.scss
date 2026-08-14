@@ -6,6 +6,12 @@
 // with no token to point at.
 
 .settings-payments-main__container.settings-payments-methods {
+	// The shared header is a single flex row (title + actions). The duplicates notice renders inside it
+	// on its own line, so allow the header to wrap here.
+	.settings-payment-gateways__header {
+		flex-wrap: wrap;
+	}
+
 	// Providers rows top-align because their content varies in height — descriptions, badge rows,
 	// stacked buttons. Every row here is a single line, so the content centres and the row is
 	// tightened to a single padding step around the 40px logo.
@@ -109,6 +115,25 @@
 	display: flex;
 	align-items: center;
 	gap: var(--wpds-dimension-gap-md);
+}
+
+// The entry-point notice renders inside the header, on its own full-width line below the title row and
+// above the header's dividing border. The header already pads its content by 48px, so the notice needs
+// no inset of its own and drops its default margins to line up with the title and rows.
+.settings-payments-methods__duplicate-notice-wrapper {
+	flex: 0 0 100%;
+	margin-top: var(--wpds-dimension-gap-md);
+
+	.components-notice {
+		margin: 0;
+	}
+}
+
+// Actions inside the entry-point "Resolve duplicate payment methods" notice.
+.settings-payments-methods__duplicate-notice-actions {
+	display: flex;
+	gap: var(--wpds-dimension-gap-sm);
+	margin-top: var(--wpds-dimension-gap-sm);
 }
 
 // Stands in for the payment method logo. It carries woocommerce-list__item-image alongside this

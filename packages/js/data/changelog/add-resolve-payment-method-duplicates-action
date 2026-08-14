@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Add the `resolvePaymentMethodDuplicates` payment-settings action and the duplicate-resolution report types.

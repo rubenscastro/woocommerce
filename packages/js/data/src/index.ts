@@ -46,6 +46,12 @@ export type {
 	PaymentsProviderLink,
 	RecommendedPaymentMethod,
 	PluginData,
+	Duplicates,
+	DuplicateGroups,
+	DuplicateResolutionReport,
+	DuplicateResolutionResult,
+	DuplicateDisableOutcome,
+	DuplicateResolutionStatus,
 } from './payment-settings/types';
 export { PaymentsProviderType } from './payment-settings/types';
 export type { ShippingMethod } from './shipping-methods/types';

@@ -14,6 +14,8 @@ import type { ReactNode } from 'react';
 import {
 	SettingsPaymentsMethods,
 	serializePaymentMethodOrder,
+	buildExpressDuplicatesLine,
+	isMethodDuplicate,
 	type Row,
 } from '../settings-payments-methods';
 
@@ -58,7 +60,9 @@ jest.mock( '~/settings-payments/components/sortable', () => ( {
 } ) );
 
 jest.mock( '~/settings-payments/components/status-badge', () => ( {
-	StatusBadge: () => <div data-testid="status-badge" />,
+	StatusBadge: ( { message }: { message?: string } ) => (
+		<div data-testid="status-badge">{ message }</div>
+	),
 } ) );
 
 jest.mock( '~/settings-payments/components/buttons', () => ( {
@@ -322,5 +326,91 @@ describe( 'SettingsPaymentsMethods', () => {
 		render( <SettingsPaymentsMethods /> );
 
 		expect( renderedOrder() ).toEqual( [ 'paypal', 'cod', 'bacs' ] );
+	} );
+
+	it( 'marks a row whose stable id is in a regular duplicate group', () => {
+		spikeSettings = { duplicates: { payment_methods: { cod: [ 'cod' ] } } };
+
+		render( <SettingsPaymentsMethods /> );
+
+		expect( screen.getByText( 'Duplicated' ) ).toBeInTheDocument();
+	} );
+
+	it( 'does not mark any row when there are no regular duplicates', () => {
+		spikeSettings = { duplicates: {} };
+
+		render( <SettingsPaymentsMethods /> );
+
+		expect( screen.queryByText( 'Duplicate' ) ).not.toBeInTheDocument();
+	} );
+
+	it( 'does not render an express duplicates line on the page, even when express duplicates exist', () => {
+		spikeSettings = {
+			duplicates: {
+				express: {
+					apple_pay_google_pay: [ 'woocommerce_payments', 'stripe' ],
+				},
+			},
+		};
+
+		render( <SettingsPaymentsMethods /> );
+
+		expect(
+			screen.queryByText( /Express checkout duplicates:/ )
+		).not.toBeInTheDocument();
+	} );
+} );
+
+describe( 'buildExpressDuplicatesLine', () => {
+	it( 'returns null when there are no express duplicates', () => {
+		expect( buildExpressDuplicatesLine( {} ) ).toBeNull();
+	} );
+
+	it( 'summarises the combined Apple Pay / Google Pay bucket with its gateways', () => {
+		expect(
+			buildExpressDuplicatesLine( {
+				apple_pay_google_pay: [ 'woocommerce_payments', 'stripe' ],
+			} )
+		).toBe(
+			'Express checkout duplicates: Apple Pay / Google Pay — woocommerce_payments, stripe'
+		);
+	} );
+
+	it( 'falls back to the canonical id for an unknown express method', () => {
+		expect(
+			buildExpressDuplicatesLine( { some_wallet: [ 'a', 'b' ] } )
+		).toBe( 'Express checkout duplicates: some_wallet — a, b' );
+	} );
+} );
+
+describe( 'isMethodDuplicate', () => {
+	const asMethod = ( fields: Partial< RegisteredPaymentMethod > ) =>
+		fields as RegisteredPaymentMethod;
+
+	it( 'flags a method whose registry name is an emitted duplicate id', () => {
+		expect(
+			isMethodDuplicate(
+				asMethod( { name: 'foo_klarna' } ),
+				new Set( [ 'foo_klarna' ] )
+			)
+		).toBe( true );
+	} );
+
+	it( 'flags a method whose paymentMethodId is an emitted duplicate id', () => {
+		expect(
+			isMethodDuplicate(
+				asMethod( { name: 'real', paymentMethodId: 'posted_id' } ),
+				new Set( [ 'posted_id' ] )
+			)
+		).toBe( true );
+	} );
+
+	it( 'does not flag a method when neither stable id matches', () => {
+		expect(
+			isMethodDuplicate(
+				asMethod( { name: 'unique' } ),
+				new Set( [ 'something_else' ] )
+			)
+		).toBe( false );
 	} );
 } );

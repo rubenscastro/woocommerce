@@ -187,10 +187,11 @@ class Payments {
 				'icon'        => plugins_url( 'assets/images/payment_methods/cod.svg', WC_PLUGIN_FILE ),
 				// The offline PMs (and their group) are obviously from WooCommerce, and WC is always active.
 				'plugin'      => array(
-					'_type'  => 'wporg',
-					'slug'   => 'woocommerce',
-					'file'   => '', // This pseudo-provider should have no use for the plugin file.
-					'status' => PaymentsProviders::EXTENSION_ACTIVE,
+					'_type'                              => 'wporg',
+					'slug'                               => 'woocommerce',
+					'file'                               => '',
+					// This pseudo-provider should have no use for the plugin file.
+												'status' => PaymentsProviders::EXTENSION_ACTIVE,
 				),
 				'management'  => array(
 					'_links' => array(
@@ -361,6 +362,31 @@ class Payments {
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Resolve duplicated regular payment methods.
+	 *
+	 * For each canonical method the merchant chose an implementation to keep; every other participating
+	 * implementation is disabled, leaving the kept one and all unrelated methods/providers untouched.
+	 * Detection is re-run server-side, so stale selections can never disable an unrelated method.
+	 *
+	 * @param array<string, string> $selections Map of canonical method id => gateway id to keep enabled.
+	 *
+	 * @return array The resolution report (per-selection outcomes plus authoritative fresh duplicate state).
+	 */
+	public function resolve_payment_method_duplicates( array $selections ): array {
+		$report = ( new PaymentMethodDuplicatesResolver() )->resolve( $selections );
+
+		$this->record_event(
+			'payment_method_duplicates_resolved',
+			array(
+				'selections' => implode( ', ', array_keys( $selections ) ),
+				'success'    => $report['success'] ? 'yes' : 'no',
+			)
+		);
+
+		return $report;
 	}
 
 	/**
@@ -576,11 +602,12 @@ class Payments {
 
 			// Generate the new snapshot for the provider.
 			$new_snapshots[ $snapshot_key ] = array(
-				'extension_active'  => true, // The extension is definitely active since we have a gateway from it.
-				'account_connected' => $provider['state']['account_connected'] ?? $default_snapshot['account_connected'],
-				'account_test_mode' => $provider['onboarding']['state']['test_mode'] ?? $default_snapshot['account_test_mode'],
-				'needs_setup'       => $provider['state']['needs_setup'] ?? $default_snapshot['needs_setup'],
-				'test_mode'         => $provider['state']['test_mode'] ?? $default_snapshot['test_mode'],
+				'extension_active'                      => true,
+				// The extension is definitely active since we have a gateway from it.
+									'account_connected' => $provider['state']['account_connected'] ?? $default_snapshot['account_connected'],
+				'account_test_mode'                     => $provider['onboarding']['state']['test_mode'] ?? $default_snapshot['account_test_mode'],
+				'needs_setup'                           => $provider['state']['needs_setup'] ?? $default_snapshot['needs_setup'],
+				'test_mode'                             => $provider['state']['test_mode'] ?? $default_snapshot['test_mode'],
 			);
 
 			// Always sort the new snapshot by keys to ensure consistency.

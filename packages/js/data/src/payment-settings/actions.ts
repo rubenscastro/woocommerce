@@ -14,6 +14,7 @@ import {
 	SuggestedPaymentsExtension,
 	SuggestedPaymentsExtensionCategory,
 	EnableGatewayResponse,
+	DuplicateResolutionReport,
 } from './types';
 import { WC_ADMIN_NAMESPACE } from '../constants';
 
@@ -158,6 +159,32 @@ export function* updatePaymentMethodOrder( order: string[] ) {
 		path: WC_ADMIN_NAMESPACE + '/settings/payments/payment-methods/order',
 		method: 'POST',
 		data: { order },
+	} );
+
+	return result;
+}
+
+/**
+ * Resolve duplicated regular payment methods.
+ *
+ * POSTs the merchant's per-duplicate provider choices (canonical method ID => the gateway ID to keep
+ * enabled) to the settings-payments REST endpoint. The server re-detects duplicates and disables the
+ * non-selected implementations, returning a structured report; this action only performs the request
+ * and returns that report without mutating the store.
+ *
+ * @param {Record<string, string>} selections Map of canonical method ID to the gateway ID to keep.
+ *
+ * @return {Generator<unknown, DuplicateResolutionReport, unknown>} The server resolution report.
+ */
+export function* resolvePaymentMethodDuplicates(
+	selections: Record< string, string >
+) {
+	const result: DuplicateResolutionReport = yield apiFetch( {
+		path:
+			WC_ADMIN_NAMESPACE +
+			'/settings/payments/payment-methods/duplicates/resolve',
+		method: 'POST',
+		data: { selections },
 	} );
 
 	return result;

@@ -147,13 +147,28 @@ class BlocksPaymentMethodsSpikeController {
 			// it answers a question the registry cannot: whether a provider's methods are its own
 			// to render. See StripeOptimizedCheckoutAdapter.
 			if ( ! $asset_registry->exists( self::ASSET_DATA_KEY ) ) {
+				$grouped_providers = ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers();
+				// Duplicate detection is a separate metadata layer: it annotates the methods
+				// discovered above, and never adds, removes or reveals a row.
+				$duplicates = ( new PaymentMethodDuplicatesDetector() )->detect();
+				$context    = $this->get_provider_context( $payment_method_registry );
+
 				$asset_registry->add(
 					self::ASSET_DATA_KEY,
 					array_merge(
 						array(
-							'groupedProviders' => ( new StripeOptimizedCheckoutAdapter() )->get_grouped_providers(),
+							'groupedProviders'   => $grouped_providers,
+							'duplicates'         => $duplicates,
+							// The provider options the resolution modal offers per resolvable duplicate.
+							// Only regular methods the representation surfaces individually appear here.
+							'duplicateProviders' => $this->get_duplicate_providers(
+								$duplicates['payment_methods'],
+								$grouped_providers,
+								$context['gatewayPlugins'],
+								$context['providerIcons']
+							),
 						),
-						$this->get_provider_context( $payment_method_registry )
+						$context
 					)
 				);
 			}
@@ -257,6 +272,123 @@ class BlocksPaymentMethodsSpikeController {
 			'methodIcons'    => $this->get_bundled_icons( 'square' ),
 			'providerAssets' => $this->get_bundled_icons( 'rectangle' ),
 		);
+	}
+
+	/**
+	 * The provider options the resolution modal offers for each resolvable regular duplicate.
+	 *
+	 * Reuses the representation authority ({@see DuplicateResolutionCandidates} over the grouped
+	 * providers) so only implementations surfaced as individual regular methods are offered — Stripe's
+	 * Optimized-Checkout children never appear here. Provider identity reuses the existing attribution
+	 * (`gatewayPlugins` + `providerIcons`); the provider label is the owning plugin's name, kept
+	 * deliberately separate from any gateway/method title (a gateway's method title can carry the method
+	 * name, e.g. WooPayments' card gateway reads "WooPayments (Card)").
+	 *
+	 * @param array<string, string[]>                                                                                           $regular_groups   The detector's `payment_methods` output.
+	 * @param array<string, array{childGatewayIds: string[], showChildren: bool, optimizedCheckout: bool, settingsUrl: string}> $grouped_providers The grouped-providers representation.
+	 * @param array<string, string>                                                                                             $gateway_plugins  Gateway id => owning plugin slug.
+	 * @param array<string, string>                                                                                             $provider_icons   Plugin slug => provider logo URL.
+	 *
+	 * @return array<string, array{implementations: array<int, array{gatewayId: string, providerSlug: string, providerLabel: string, providerIcon: string, canDisable: bool}>, requiredKeepGatewayId: string|null}>
+	 */
+	private function get_duplicate_providers( array $regular_groups, array $grouped_providers, array $gateway_plugins, array $provider_icons ): array {
+		try {
+			$resolvable = ( new DuplicateResolutionCandidates() )->compute( $regular_groups, $grouped_providers )['resolvable'];
+
+			// The resolver owns the disable-capability model (which implementations can be disabled and
+			// whether a canonical has a single required keep), so the payload matches what the resolver
+			// will validate at apply time. Canonicals with more than one non-disableable implementation
+			// are omitted here — they are not safely resolvable through the modal.
+			$candidates = ( new PaymentMethodDuplicatesResolver() )->describe_candidates( $resolvable, $grouped_providers );
+
+			if ( empty( $candidates ) ) {
+				return array();
+			}
+
+			$plugin_names = $this->get_plugin_names();
+
+			$duplicate_providers = array();
+
+			foreach ( $candidates as $canonical_id => $candidate ) {
+				$implementations = array();
+
+				foreach ( $candidate['implementations'] as $implementation ) {
+					$gateway_id  = $implementation['gatewayId'];
+					$plugin_slug = $gateway_plugins[ $gateway_id ] ?? '';
+
+					$implementations[] = array(
+						'gatewayId'     => $gateway_id,
+						'providerSlug'  => $plugin_slug,
+						'providerLabel' => $this->get_provider_label( $plugin_slug, $plugin_names ),
+						'providerIcon'  => '' !== $plugin_slug ? ( $provider_icons[ $plugin_slug ] ?? '' ) : '',
+						'canDisable'    => $implementation['canDisable'],
+					);
+				}
+
+				$duplicate_providers[ (string) $canonical_id ] = array(
+					'implementations'       => $implementations,
+					'requiredKeepGatewayId' => $candidate['requiredKeepGatewayId'],
+				);
+			}
+
+			return $duplicate_providers;
+		} catch ( Throwable $e ) {
+			// Provider options are advisory; a misbehaving gateway must not break discovery.
+			return array();
+		}
+	}
+
+	/**
+	 * The installed plugins' display names, keyed by their directory slug.
+	 *
+	 * This is the owning-plugin identity — the authoritative provider name — read from the plugin
+	 * header, deliberately independent of any gateway or method title.
+	 *
+	 * @return array<string, string> Plugin directory slug => plugin name.
+	 */
+	private function get_plugin_names(): array {
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		$names = array();
+
+		foreach ( get_plugins() as $plugin_file => $data ) {
+			$slug = (string) strtok( (string) $plugin_file, '/' );
+
+			if ( '' === $slug || isset( $names[ $slug ] ) ) {
+				continue;
+			}
+
+			$name = isset( $data['Name'] ) ? trim( wp_strip_all_tags( (string) $data['Name'] ) ) : '';
+
+			if ( '' !== $name ) {
+				$names[ $slug ] = $name;
+			}
+		}
+
+		return $names;
+	}
+
+	/**
+	 * The display label for a provider: its owning plugin's name.
+	 *
+	 * @param string                $plugin_slug  The owning plugin slug.
+	 * @param array<string, string> $plugin_names Plugin directory slug => plugin name.
+	 *
+	 * @return string
+	 */
+	private function get_provider_label( string $plugin_slug, array $plugin_names ): string {
+		if ( '' === $plugin_slug ) {
+			return '';
+		}
+
+		if ( isset( $plugin_names[ $plugin_slug ] ) ) {
+			return $plugin_names[ $plugin_slug ];
+		}
+
+		// Last resort when the plugin header cannot be read: a readable form of the slug.
+		return ucwords( str_replace( array( '-', '_' ), ' ', $plugin_slug ) );
 	}
 
 	/**

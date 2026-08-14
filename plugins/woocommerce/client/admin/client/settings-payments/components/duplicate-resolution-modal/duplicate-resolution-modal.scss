@@ -1,0 +1,91 @@
+.duplicate-resolution-modal {
+	.components-modal__content {
+		// Keep a stable width so the two steps don't reflow as their content changes.
+		width: 100%;
+		max-width: 640px;
+	}
+
+	&__description {
+		margin: 0 0 var(--wpds-dimension-gap-md);
+		color: var(--wpds-color-content-neutral-weak);
+	}
+
+	&__list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--wpds-dimension-gap-md);
+	}
+
+	&__row {
+		display: flex;
+		align-items: flex-start;
+		gap: var(--wpds-dimension-gap-md);
+	}
+
+	&__row-icon {
+		flex: 0 0 auto;
+		width: 40px;
+		height: 40px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+
+		img {
+			max-width: 40px;
+			max-height: 40px;
+		}
+	}
+
+	&__row-details {
+		flex: 1 1 auto;
+		min-width: 0;
+	}
+
+	&__row-title {
+		display: block;
+		font-weight: var(--wpds-typography-font-weight-medium);
+		margin-bottom: var(--wpds-dimension-gap-sm);
+	}
+
+	&__row-select {
+		width: 100%;
+	}
+
+	&__express-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+		gap: var(--wpds-dimension-gap-sm);
+	}
+
+	&__express-name {
+		font-weight: var(--wpds-typography-font-weight-medium);
+		margin-inline-end: var(--wpds-dimension-gap-sm);
+	}
+
+	&__express-providers {
+		color: var(--wpds-color-content-neutral-weak);
+	}
+
+	&__footer {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-top: var(--wpds-dimension-padding-lg);
+	}
+
+	&__step-indicator {
+		text-transform: uppercase;
+		font-size: var(--wpds-typography-font-size-sm);
+		font-weight: var(--wpds-typography-font-weight-medium);
+		color: var(--wpds-color-content-neutral-weak);
+	}
+
+	&__actions {
+		display: flex;
+		gap: var(--wpds-dimension-gap-sm);
+		margin-inline-start: auto;
+	}
+}

@@ -233,3 +233,35 @@ export type EnableGatewayResponse = {
 export interface WooPayEligibilityResponse {
 	is_eligible: boolean;
 }
+
+export type DuplicateGroups = Record< string, string[] >;
+
+export type Duplicates = {
+	payment_methods?: DuplicateGroups;
+	express?: DuplicateGroups;
+};
+
+export type DuplicateResolutionStatus =
+	| 'disabled'
+	| 'failed'
+	| 'unsupported'
+	| 'skipped';
+
+export type DuplicateDisableOutcome = {
+	gatewayId: string;
+	status: DuplicateResolutionStatus;
+	message: string;
+};
+
+export type DuplicateResolutionResult = {
+	canonicalId: string;
+	kept: string;
+	disabled: DuplicateDisableOutcome[];
+	error: string | null;
+};
+
+export type DuplicateResolutionReport = {
+	success: boolean;
+	results: DuplicateResolutionResult[];
+	duplicates: Duplicates;
+};

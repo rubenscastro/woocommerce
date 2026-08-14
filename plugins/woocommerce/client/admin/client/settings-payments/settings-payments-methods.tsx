@@ -31,6 +31,11 @@ import {
 } from '~/settings-payments/components/sortable';
 import { StatusBadge } from '~/settings-payments/components/status-badge';
 import { BackButton } from '~/settings-payments/components/buttons';
+import {
+	DuplicateResolutionModal,
+	type DuplicateProviderOption,
+	type DuplicateResolutionRow,
+} from '~/settings-payments/components/duplicate-resolution-modal';
 // Paints #wpbody and #mainform white for the whole Payments tab. Every other page in this module
 // imports it; without it the wp-admin body grey shows through behind the list — most visibly
 // behind a row while it is being dragged.
@@ -43,12 +48,32 @@ type GroupedProvider = {
 	settingsUrl: string;
 };
 
+// Duplicate-detection metadata, produced server-side by PaymentMethodDuplicatesDetector. Each value
+// is the list of enabled gateway ids that resolve to the same canonical method. Regular and express
+// methods are kept apart because the page represents them differently.
+type Duplicates = {
+	payment_methods?: Record< string, string[] >;
+	express?: Record< string, string[] >;
+};
+
 type SpikeSettings = {
 	groupedProviders?: Record< string, GroupedProvider >;
 	gatewayPlugins?: Record< string, string >;
 	providerIcons?: Record< string, string >;
 	methodIcons?: Record< string, string >;
 	providerAssets?: Record< string, string >;
+	duplicates?: Duplicates;
+	// Provider candidates per resolvable regular duplicate, produced server-side. Only methods the
+	// representation surfaces individually appear here (e.g. Stripe's Optimized Checkout children are
+	// excluded), and only canonicals that are safely resolvable (at most one non-disableable
+	// implementation) are included. `requiredKeepGatewayId` names the sole valid keep when one exists.
+	duplicateProviders?: Record<
+		string,
+		{
+			implementations: DuplicateProviderOption[];
+			requiredKeepGatewayId: string | null;
+		}
+	>;
 };
 
 export type Row = {
@@ -449,6 +474,74 @@ const ordersEqual = ( a: string[], b: string[] ): boolean =>
 	a.every( ( value, index ) => value === b[ index ] );
 
 /**
+ * Human-readable labels for the canonical express methods the detector can report.
+ *
+ * The detector currently cannot tell Apple Pay and Google Pay apart — both signals collapse into
+ * one `apple_pay_google_pay` bucket — so the label preserves that combined identity rather than
+ * claiming two independent collisions. See `search_for_payment_request_buttons` in WooPayments.
+ */
+const EXPRESS_METHOD_LABELS: Record< string, string > = {
+	apple_pay_google_pay: 'Apple Pay / Google Pay',
+};
+
+/**
+ * The set of enabled gateway ids that belong to a regular (non-express) duplicate group.
+ *
+ * Used to decide whether a rendered row belongs to a duplicate group, by exact membership only.
+ */
+export const regularDuplicateGatewayIds = (
+	duplicates: Duplicates
+): Set< string > =>
+	new Set( Object.values( duplicates.payment_methods ?? {} ).flat() );
+
+/**
+ * Whether a rendered method is part of a regular duplicate group.
+ *
+ * Deliberately conservative: a row is flagged only when one of its own stable identifiers — its
+ * registry `name` or `gatewayIdOf` (`paymentMethodId || name`) — is exactly one of the gateway ids
+ * the detector emitted. We do not assume `paymentMethodId`/`name` equals the `WC_Payment_Gateway`
+ * id universally, and we never normalise or match display labels. A detected collision whose gateway
+ * ids match no rendered row's stable id stays in the detector output as an unmapped finding rather
+ * than being guessed onto a row.
+ */
+export const isMethodDuplicate = (
+	paymentMethod: RegisteredPaymentMethod,
+	duplicateGatewayIds: Set< string >
+): boolean =>
+	duplicateGatewayIds.has( paymentMethod.name ) ||
+	duplicateGatewayIds.has( gatewayIdOf( paymentMethod ) );
+
+/**
+ * A one-line, human-readable summary of the detected express duplicates, or null when there are
+ * none.
+ *
+ * TODO (temporary): this is a diagnostic line, not final UI. Express methods have no proper
+ * representation on the Payment methods page yet, so detected express duplicates are surfaced here
+ * for observability only, and never added as rows. Remove once express methods have a real
+ * deduplication representation.
+ */
+export const buildExpressDuplicatesLine = (
+	express: Record< string, string[] >
+): string | null => {
+	const entries = Object.entries( express );
+
+	if ( entries.length === 0 ) {
+		return null;
+	}
+
+	const parts = entries.map( ( [ canonicalId, gatewayIds ] ) => {
+		const label = EXPRESS_METHOD_LABELS[ canonicalId ] ?? canonicalId;
+
+		return `${ label } — ${ gatewayIds.join( ', ' ) }`;
+	} );
+
+	return `${ __(
+		'Express checkout duplicates:',
+		'woocommerce'
+	) } ${ parts.join( ' · ' ) }`;
+};
+
+/**
  * Lists the individual payment methods registered for the Checkout Block, in checkout order.
  *
  * The list comes from the client-side registry that the Checkout Block itself uses: the active
@@ -466,7 +559,81 @@ export const SettingsPaymentsMethods = () => {
 		providerIcons = {},
 		methodIcons = {},
 		providerAssets = {},
+		duplicates = {},
+		duplicateProviders = {},
 	} = getSetting< SpikeSettings >( 'blocksPaymentMethodsSpike', {} );
+
+	// The gateway ids of every regular duplicate group, for exact-membership row marking. Derived from
+	// server-produced metadata, so memoise on it.
+	const duplicateGatewayIds = useMemo(
+		() => regularDuplicateGatewayIds( duplicates ),
+		[ duplicates ]
+	);
+
+	// The rows the resolution modal offers: one per resolvable regular duplicate, each carrying a
+	// pre-rendered method icon and name (built here, where the registry and icon maps live) plus the
+	// server-provided provider options.
+	const duplicateRows: DuplicateResolutionRow[] = useMemo( () => {
+		const registered = Object.values( getPaymentMethods() );
+		const byId = new Map< string, RegisteredPaymentMethod >();
+		registered.forEach( ( method ) => {
+			byId.set( gatewayIdOf( method ), method );
+			byId.set( method.name, method );
+		} );
+
+		return Object.entries( duplicateProviders ).map(
+			( [ canonicalId, candidate ] ) => {
+				const options = candidate.implementations;
+				const method = options
+					.map( ( option ) => byId.get( option.gatewayId ) )
+					.find( ( found ): found is RegisteredPaymentMethod =>
+						Boolean( found )
+					);
+
+				return {
+					canonicalId,
+					options,
+					requiredKeepGatewayId: candidate.requiredKeepGatewayId,
+					icon: method ? (
+						<MethodIcon
+							paymentMethod={ method }
+							icons={ methodIcons }
+							pluginSlug={
+								gatewayPlugins[ gatewayIdOf( method ) ]
+							}
+						/>
+					) : (
+						<div
+							className="woocommerce-list__item-image settings-payments-methods__icon-placeholder"
+							aria-hidden="true"
+						/>
+					),
+					label: method ? (
+						<PaymentMethodName paymentMethod={ method } />
+					) : (
+						canonicalId
+					),
+				};
+			}
+		);
+	}, [ duplicateProviders, methodIcons, gatewayPlugins ] );
+
+	// The prepared, non-mutating Step 2 (express) content. Reuses the same combined labels as the
+	// temporary diagnostic line.
+	const expressItems = useMemo(
+		() =>
+			Object.entries( duplicates.express ?? {} ).map(
+				( [ canonicalId, gatewayIds ] ) => ( {
+					label: EXPRESS_METHOD_LABELS[ canonicalId ] ?? canonicalId,
+					gatewayIds,
+				} )
+			),
+		[ duplicates ]
+	);
+
+	const [ isDuplicateModalOpen, setIsDuplicateModalOpen ] = useState( false );
+	const [ isDuplicateNoticeDismissed, setIsDuplicateNoticeDismissed ] =
+		useState( false );
 
 	const { updatePaymentMethodOrder } = useDispatch( paymentSettingsStore );
 	const { createSuccessNotice } = useDispatch( 'core/notices' );
@@ -603,6 +770,51 @@ export const SettingsPaymentsMethods = () => {
 							{ __( 'Save', 'woocommerce' ) }
 						</Button>
 					</div>
+					{ duplicateRows.length > 0 &&
+						! isDuplicateNoticeDismissed && (
+							// Wrapped so the banner aligns with the row content: the list rows and the header
+							// are inset 48px, but a Notice placed directly in the section would span the full
+							// width. This wrapper reproduces that inset.
+							<div className="settings-payments-methods__duplicate-notice-wrapper">
+								<Notice
+									className="settings-payments-methods__duplicate-notice"
+									status="warning"
+									onRemove={ () =>
+										setIsDuplicateNoticeDismissed( true )
+									}
+								>
+									<p>
+										{ __(
+											'Some payment methods are enabled through multiple providers. Review them to avoid showing duplicate options at checkout.',
+											'woocommerce'
+										) }
+									</p>
+									<div className="settings-payments-methods__duplicate-notice-actions">
+										<Button
+											variant="secondary"
+											onClick={ () =>
+												setIsDuplicateModalOpen( true )
+											}
+										>
+											{ __(
+												'Review duplicates',
+												'woocommerce'
+											) }
+										</Button>
+										<Button
+											variant="tertiary"
+											onClick={ () =>
+												setIsDuplicateNoticeDismissed(
+													true
+												)
+											}
+										>
+											{ __( 'Cancel', 'woocommerce' ) }
+										</Button>
+									</div>
+								</Notice>
+							</div>
+						) }
 				</div>
 				{ error && (
 					<Notice
@@ -672,6 +884,18 @@ export const SettingsPaymentsMethods = () => {
 													status="inactive"
 													message={ __(
 														'Using Optimized Checkout',
+														'woocommerce'
+													) }
+												/>
+											) }
+											{ isMethodDuplicate(
+												row.paymentMethod,
+												duplicateGatewayIds
+											) && (
+												<StatusBadge
+													status="not_supported"
+													message={ __(
+														'Duplicated',
 														'woocommerce'
 													) }
 												/>
@@ -765,6 +989,13 @@ export const SettingsPaymentsMethods = () => {
 					) ) }
 				</SortableContainer>
 			</div>
+			{ isDuplicateModalOpen && (
+				<DuplicateResolutionModal
+					rows={ duplicateRows }
+					expressItems={ expressItems }
+					onClose={ () => setIsDuplicateModalOpen( false ) }
+				/>
+			) }
 		</div>
 	);
 };

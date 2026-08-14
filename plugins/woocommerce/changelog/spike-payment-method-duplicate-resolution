@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Add duplicate payment-method resolution to the Payment methods settings page: a two-step modal to keep one provider per duplicated regular method, a provider-agnostic resolver service with a `woocommerce_payment_method_duplicate_resolvers` extension seam, and a REST endpoint to apply the merchant's choices.

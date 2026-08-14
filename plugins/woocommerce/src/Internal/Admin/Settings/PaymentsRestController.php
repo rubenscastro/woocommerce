@@ -67,8 +67,9 @@ class PaymentsRestController extends RestApiControllerBase {
 						'location' => array(
 							'description'       => esc_html__( 'The ISO3166 alpha-2 country code to save for the current user.', 'woocommerce' ),
 							'type'              => 'string',
-							'pattern'           => '[a-zA-Z]{2}', // Two alpha characters.
-							'required'          => true,
+							'pattern'           => '[a-zA-Z]{2}',
+							// Two alpha characters.
+																											'required' => true,
 							'validate_callback' => fn( $value, $request ) => $this->check_location_arg( $value, $request ),
 						),
 					),
@@ -89,8 +90,9 @@ class PaymentsRestController extends RestApiControllerBase {
 						'location' => array(
 							'description'       => esc_html__( 'ISO3166 alpha-2 country code. Defaults to WooCommerce\'s base location country.', 'woocommerce' ),
 							'type'              => 'string',
-							'pattern'           => '[a-zA-Z]{2}', // Two alpha characters.
-							'required'          => false,
+							'pattern'           => '[a-zA-Z]{2}',
+							// Two alpha characters.
+																											'required' => false,
 							'validate_callback' => fn( $value, $request ) => $this->check_location_arg( $value, $request ),
 						),
 					),
@@ -135,6 +137,28 @@ class PaymentsRestController extends RestApiControllerBase {
 							'required'          => true,
 							'items'             => array( 'type' => 'string' ),
 							'sanitize_callback' => fn( $value ) => $this->sanitize_payment_methods_order_arg( $value ),
+						),
+					),
+				),
+			),
+			$override
+		);
+		register_rest_route(
+			$this->route_namespace,
+			'/' . $this->rest_base . '/payment-methods/duplicates/resolve',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::EDITABLE,
+					'callback'            => fn( $request ) => $this->run( $request, 'resolve_payment_method_duplicates' ),
+					'permission_callback' => fn( $request ) => $this->check_permissions( $request ),
+					'args'                => array(
+						'selections' => array(
+							'description'          => esc_html__( 'A map of canonical payment method ID to the gateway ID to keep enabled; every other implementation of that method is disabled.', 'woocommerce' ),
+							'type'                 => 'object',
+							'required'             => true,
+							'additionalProperties' => array( 'type' => 'string' ),
+							'validate_callback'    => fn( $value ) => $this->check_duplicate_selections_arg( $value ),
+							'sanitize_callback'    => fn( $value ) => $this->sanitize_duplicate_selections_arg( $value ),
 						),
 					),
 				),
@@ -305,6 +329,21 @@ class PaymentsRestController extends RestApiControllerBase {
 		}
 
 		return rest_ensure_response( array( 'success' => $result ) );
+	}
+
+	/**
+	 * Resolve duplicated regular payment methods.
+	 *
+	 * @param WP_REST_Request<array<string, mixed>> $request The request object.
+	 *
+	 * @return WP_Error|WP_REST_Response
+	 */
+	protected function resolve_payment_method_duplicates( WP_REST_Request $request ) { // phpcs:ignore Squiz.Commenting.FunctionComment.IncorrectTypeHint
+		$selections = (array) $request->get_param( 'selections' );
+
+		$report = $this->payments->resolve_payment_method_duplicates( $selections );
+
+		return rest_ensure_response( $report );
 	}
 
 	/**
@@ -540,6 +579,65 @@ class PaymentsRestController extends RestApiControllerBase {
 		}
 
 		return $strings;
+	}
+
+	/**
+	 * Validate the duplicate-resolution selections argument.
+	 *
+	 * Enforces only the transport shape: a map of non-empty string canonical ids to non-empty string
+	 * gateway ids. Whether a selection is actually a current, resolvable duplicate is decided server-side
+	 * against fresh detection by the resolver, never against the client-submitted payload.
+	 *
+	 * @param mixed $value Value of the argument.
+	 *
+	 * @return WP_Error|true True if the selections argument is valid, otherwise a WP_Error object.
+	 */
+	private function check_duplicate_selections_arg( $value ) {
+		if ( ! is_array( $value ) ) {
+			return new WP_Error( 'rest_invalid_param', esc_html__( 'The selections argument must be an object.', 'woocommerce' ), array( 'status' => 400 ) );
+		}
+
+		foreach ( $value as $canonical_id => $gateway_id ) {
+			if ( ! is_string( $canonical_id ) || '' === $canonical_id || ! is_string( $gateway_id ) || '' === $gateway_id ) {
+				return new WP_Error( 'rest_invalid_param', esc_html__( 'The selections argument must map non-empty canonical method IDs to non-empty gateway IDs.', 'woocommerce' ), array( 'status' => 400 ) );
+			}
+		}
+
+		return true;
+	}
+
+	/**
+	 * Sanitize the duplicate-resolution selections argument.
+	 *
+	 * Reduces both keys and values to safe ID strings; entries that sanitize to empty are dropped. Reuses
+	 * the same ID sanitization as provider IDs so the identity rules are consistent across the controller.
+	 *
+	 * @param mixed $value Value of the argument.
+	 *
+	 * @return array<string, string> The sanitized canonical id => gateway id map.
+	 */
+	private function sanitize_duplicate_selections_arg( $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$sanitized = array();
+		foreach ( $value as $canonical_id => $gateway_id ) {
+			if ( ! is_string( $canonical_id ) || ! is_string( $gateway_id ) ) {
+				continue;
+			}
+
+			$canonical_id = $this->sanitize_provider_id( $canonical_id );
+			$gateway_id   = $this->sanitize_provider_id( $gateway_id );
+
+			if ( '' === $canonical_id || '' === $gateway_id ) {
+				continue;
+			}
+
+			$sanitized[ $canonical_id ] = $gateway_id;
+		}
+
+		return $sanitized;
 	}
 
 	/**

@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Add a provider-agnostic duplicate payment-method detector and surface duplicate metadata on the Payment methods settings page, with two extensibility filters for extensions to contribute their canonical payment-method ids and gateway keywords.
