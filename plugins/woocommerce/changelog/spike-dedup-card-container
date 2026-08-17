@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Duplicate-resolution modal: wrap the required-keep method's opt-in toggle in a Card container (the standard @wordpress/components Card/CardBody) so it reads as a distinct primary decision, separate from the free-choice provider rows.

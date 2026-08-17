@@ -1,7 +1,12 @@
 /**
  * External dependencies
  */
-import { SelectControl, ToggleControl } from '@wordpress/components';
+import {
+	Card as WPCard,
+	CardBody,
+	SelectControl,
+	ToggleControl,
+} from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
 /**
@@ -56,20 +61,16 @@ export const StepRegular = ( {
 			const requiredKeep = row.requiredKeepGatewayId;
 			const method = methodNameOf( row );
 
-			return (
-				<div
-					key={ row.canonicalId }
-					className="duplicate-resolution-modal__row"
-				>
-					{ /* The required-keep row is a full-width toggle and carries no method
-					     icon; only the free-choice rows show one. */ }
-					{ ! requiredKeep && (
-						<div className="duplicate-resolution-modal__row-icon">
-							{ row.icon }
-						</div>
-					) }
-					<div className="duplicate-resolution-modal__row-details">
-						{ requiredKeep ? (
+			// A required-keep method (e.g. Card) is a single primary decision, so it is set apart in
+			// its own card container with an opt-in toggle rather than a row with a select.
+			if ( requiredKeep ) {
+				return (
+					<WPCard
+						key={ row.canonicalId }
+						size="small"
+						className="duplicate-resolution-modal__required"
+					>
+						<CardBody>
 							<ToggleControl
 								__nextHasNoMarginBottom
 								className="duplicate-resolution-modal__row-toggle"
@@ -104,40 +105,48 @@ export const StepRegular = ( {
 									)
 								}
 							/>
-						) : (
-							<>
-								<span className="duplicate-resolution-modal__row-title">
-									{ row.label }
-								</span>
-								<SelectControl
-									__nextHasNoMarginBottom
-									className="duplicate-resolution-modal__row-select"
-									aria-label={ __(
+						</CardBody>
+					</WPCard>
+				);
+			}
+
+			return (
+				<div
+					key={ row.canonicalId }
+					className="duplicate-resolution-modal__row"
+				>
+					<div className="duplicate-resolution-modal__row-icon">
+						{ row.icon }
+					</div>
+					<div className="duplicate-resolution-modal__row-details">
+						<span className="duplicate-resolution-modal__row-title">
+							{ row.label }
+						</span>
+						<SelectControl
+							__nextHasNoMarginBottom
+							className="duplicate-resolution-modal__row-select"
+							aria-label={ __(
+								'Choose a provider',
+								'woocommerce'
+							) }
+							value={ selections[ row.canonicalId ] ?? '' }
+							options={ [
+								{
+									label: __(
 										'Choose a provider',
 										'woocommerce'
-									) }
-									value={
-										selections[ row.canonicalId ] ?? ''
-									}
-									options={ [
-										{
-											label: __(
-												'Choose a provider',
-												'woocommerce'
-											),
-											value: '',
-										},
-										...row.options.map( ( option ) => ( {
-											label: option.providerLabel,
-											value: option.gatewayId,
-										} ) ),
-									] }
-									onChange={ ( value ) =>
-										onSelect( row.canonicalId, value )
-									}
-								/>
-							</>
-						) }
+									),
+									value: '',
+								},
+								...row.options.map( ( option ) => ( {
+									label: option.providerLabel,
+									value: option.gatewayId,
+								} ) ),
+							] }
+							onChange={ ( value ) =>
+								onSelect( row.canonicalId, value )
+							}
+						/>
 					</div>
 				</div>
 			);
