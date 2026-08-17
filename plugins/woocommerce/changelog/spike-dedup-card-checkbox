@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Duplicate-resolution modal: render the required-keep method (e.g. Card, where WooPayments cannot be disabled) as an opt-in checkbox — "Use <provider> as the default <method> provider" — that disables the other providers when ticked and leaves the method untouched when not, instead of a locked select. Add more spacing before the modal footer, and give the Payment providers duplicate notice its own bottom border so it reads as a section banner rather than part of the first provider.

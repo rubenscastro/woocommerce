@@ -56,16 +56,11 @@ export const DuplicateResolutionModal = ( {
 	const totalSteps = hasExpressStep ? 2 : 1;
 
 	const [ step, setStep ] = useState( 1 );
-	// A duplicate whose only valid keep is fixed by the server (an implementation that cannot be
-	// disabled) starts already selected; the rest start empty for the merchant to choose.
+	// Every row starts unchosen: free-choice rows wait for a provider selection, and a required-keep row
+	// (rendered as an opt-in checkbox) waits for the merchant to tick "use this provider and hide the
+	// duplicates". Nothing is preselected, so an untouched required-keep method is simply left as is.
 	const [ selections, setSelections ] = useState< Record< string, string > >(
-		() =>
-			rows.reduce< Record< string, string > >( ( initial, row ) => {
-				if ( row.requiredKeepGatewayId ) {
-					initial[ row.canonicalId ] = row.requiredKeepGatewayId;
-				}
-				return initial;
-			}, {} )
+		{}
 	);
 	const [ isSaving, setIsSaving ] = useState( false );
 	const [ error, setError ] = useState< string | null >( null );
@@ -79,12 +74,19 @@ export const DuplicateResolutionModal = ( {
 	const { resolvePaymentMethodDuplicates } =
 		useDispatch( paymentSettingsStore );
 
-	// Every duplicate must have an explicit provider chosen before the resolution can be applied. There
-	// is no default selection, so an untouched or placeholder row leaves the primary action disabled.
-	const allChosen = useMemo(
-		() => rows.every( ( row ) => Boolean( selections[ row.canonicalId ] ) ),
-		[ rows, selections ]
-	);
+	// The merchant can apply once every free-choice duplicate has a provider chosen and at least one
+	// method is set to resolve. Required-keep rows are opt-in checkboxes, so leaving them unticked never
+	// blocks the action — it just leaves that method untouched.
+	const canApply = useMemo( () => {
+		const freeChoiceChosen = rows.every( ( row ) =>
+			row.requiredKeepGatewayId
+				? true
+				: Boolean( selections[ row.canonicalId ] )
+		);
+		const anyChosen = Object.values( selections ).some( Boolean );
+
+		return freeChoiceChosen && anyChosen;
+	}, [ rows, selections ] );
 
 	const onSelect = ( canonicalId: string, gatewayId: string ) =>
 		setSelections( ( current ) => ( {
@@ -98,9 +100,16 @@ export const DuplicateResolutionModal = ( {
 		setIsSaving( true );
 		setError( null );
 
+		// Only submit methods the merchant actually set to resolve; unticked/placeholder rows are omitted.
+		const chosen = Object.fromEntries(
+			Object.entries( selections ).filter( ( [ , gatewayId ] ) =>
+				Boolean( gatewayId )
+			)
+		);
+
 		try {
 			const result = ( await resolvePaymentMethodDuplicates(
-				selections
+				chosen
 			) ) as DuplicateResolutionReport | undefined;
 
 			setIsSaving( false );
@@ -142,9 +151,9 @@ export const DuplicateResolutionModal = ( {
 		setStep( ( current ) => current + 1 );
 	};
 
-	// Only the regular step gates on having a choice for every duplicate; the express shell collects
-	// nothing, so it never blocks the primary action.
-	const primaryDisabled = ( step === 1 && ! allChosen ) || isSaving;
+	// Only the regular step gates on having something to resolve; the express shell collects nothing, so
+	// it never blocks the primary action.
+	const primaryDisabled = ( step === 1 && ! canApply ) || isSaving;
 
 	return (
 		<Modal

@@ -107,7 +107,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin-top: var(--wpds-dimension-padding-lg);
+		// Extra breathing room between the last method row and the actions.
+		margin-top: var(--wpds-dimension-padding-3xl);
 	}
 
 	&__step-indicator {

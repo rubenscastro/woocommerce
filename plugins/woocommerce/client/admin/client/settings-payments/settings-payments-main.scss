@@ -94,16 +94,19 @@ $payments-header-row-height: 38px;
 
 		// The duplicate warning sits below the header, inset to the same 48px as the
 		// header and the list rows so the notice never touches the window edge or the
-		// admin menu. Mirrors the header's responsive horizontal padding.
+		// admin menu. Mirrors the header's responsive horizontal padding. Its own
+		// bottom border gives the first provider a clean top edge, so the banner reads
+		// as a section-level notice rather than part of the first provider row.
 		&__duplicate-notice {
-			padding: $gap 48px 0;
+			padding: $gap 48px;
+			border-bottom: 1px solid $gray-200;
 
 			@media screen and (max-width: $break-xlarge) {
-				padding: $gap $gap-large 0;
+				padding: $gap $gap-large;
 			}
 
 			@media screen and (max-width: $break-medium) {
-				padding: $gap $gap 0;
+				padding: $gap $gap;
 			}
 
 			.components-notice {

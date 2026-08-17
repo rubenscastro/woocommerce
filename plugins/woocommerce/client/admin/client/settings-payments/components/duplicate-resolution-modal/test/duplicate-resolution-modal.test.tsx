@@ -376,7 +376,7 @@ describe( 'DuplicateResolutionModal', () => {
 		expect( screen.getByText( 'Step 1 of 2' ) ).toBeInTheDocument();
 	} );
 
-	it( 'preselects and locks the required keep, and submits it, when one implementation cannot be disabled', async () => {
+	it( 'offers the required keep as an opt-in checkbox that submits it when ticked', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: true,
 			results: [],
@@ -392,13 +392,18 @@ describe( 'DuplicateResolutionModal', () => {
 			/>
 		);
 
-		const select = screen.getByRole( 'combobox' );
-		// WooPayments is preselected and the control is locked so Stripe cannot be chosen.
-		expect( select ).toBeDisabled();
-		expect( select ).toHaveValue( 'woocommerce_payments' );
+		// The required-keep row is a checkbox, not a select, and starts unticked — so nothing is applied
+		// until the merchant opts in.
+		expect( screen.queryByRole( 'combobox' ) ).not.toBeInTheDocument();
+		const checkbox = screen.getByRole( 'checkbox', {
+			name: /Use WooPayments as the default/,
+		} );
+		expect( checkbox ).not.toBeChecked();
 
-		// No user choice is required — the action is immediately available.
 		const apply = screen.getByRole( 'button', { name: 'Apply' } );
+		expect( apply ).toBeDisabled();
+
+		await userEvent.click( checkbox );
 		expect( apply ).toBeEnabled();
 
 		await userEvent.click( apply );
@@ -406,6 +411,37 @@ describe( 'DuplicateResolutionModal', () => {
 		// The kept implementation is WooPayments (never Stripe).
 		expect( resolve ).toHaveBeenCalledWith( {
 			card: 'woocommerce_payments',
+		} );
+	} );
+
+	it( 'leaves the required-keep method untouched when its checkbox is not ticked', async () => {
+		const resolve = jest.fn().mockResolvedValue( {
+			success: true,
+			results: [],
+			duplicates: {},
+		} );
+		setDispatch( resolve );
+
+		render(
+			<DuplicateResolutionModal
+				rows={ [ cardRequiredRow, klarnaRow ] }
+				expressItems={ [] }
+				onClose={ jest.fn() }
+			/>
+		);
+
+		// Resolve only Klarna; leave the Card checkbox unticked.
+		await userEvent.selectOptions(
+			screen.getByRole( 'combobox' ),
+			'woocommerce_payments_klarna'
+		);
+		await userEvent.click(
+			screen.getByRole( 'button', { name: 'Apply' } )
+		);
+
+		// Card is omitted from the payload entirely, so it is left as is.
+		expect( resolve ).toHaveBeenCalledWith( {
+			klarna: 'woocommerce_payments_klarna',
 		} );
 	} );
 
@@ -434,7 +470,7 @@ describe( 'DuplicateResolutionModal', () => {
 		).toBeDisabled();
 	} );
 
-	it( 'requires a choice only for the selectable duplicate when Card is locked', async () => {
+	it( 'submits both the ticked required keep and the chosen free duplicate', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: true,
 			results: [],
@@ -451,16 +487,19 @@ describe( 'DuplicateResolutionModal', () => {
 		);
 
 		const apply = screen.getByRole( 'button', { name: 'Apply' } );
-		// Card is already satisfied (locked to WooPayments); Klarna still needs a choice.
+		// Nothing chosen yet — the free Klarna duplicate still needs a provider.
 		expect( apply ).toBeDisabled();
 
-		const [ cardSelect, klarnaSelect ] = screen.getAllByRole( 'combobox' );
-		expect( cardSelect ).toBeDisabled();
-		expect( klarnaSelect ).toBeEnabled();
-
+		// One free-choice select (Klarna) and one checkbox (Card).
+		const klarnaSelect = screen.getByRole( 'combobox' );
 		await userEvent.selectOptions(
 			klarnaSelect,
 			'woocommerce_payments_klarna'
+		);
+		await userEvent.click(
+			screen.getByRole( 'checkbox', {
+				name: /Use WooPayments as the default/,
+			} )
 		);
 		expect( apply ).toBeEnabled();
 
