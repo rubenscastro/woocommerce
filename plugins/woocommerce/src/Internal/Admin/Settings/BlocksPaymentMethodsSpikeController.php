@@ -545,6 +545,12 @@ class BlocksPaymentMethodsSpikeController {
 				$suggestion = $this->payment_providers->get_extension_suggestion_by_plugin_slug( Utils::normalize_plugin_slug( $plugin_slug ) );
 
 				if ( is_array( $suggestion ) && ! empty( $suggestion['title'] ) ) {
+					// WooPayments' suggestion title is marketing copy ("Accept payments with Woo"); use the
+					// brand name instead. Hardcoded for the spike rather than adding a provider-brand seam.
+					if ( isset( $suggestion['id'] ) && 'woopayments' === $suggestion['id'] ) {
+						return 'WooPayments';
+					}
+
 					return (string) $suggestion['title'];
 				}
 			} catch ( Throwable $e ) {

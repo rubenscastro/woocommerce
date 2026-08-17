@@ -49,8 +49,8 @@ type DuplicateSpikeSettings = {
 export const buildDuplicateResolutionRows = (
 	duplicateProviders: DuplicateProviders
 ): DuplicateResolutionRow[] =>
-	Object.entries( duplicateProviders ).map(
-		( [ canonicalId, candidate ] ) => ( {
+	Object.entries( duplicateProviders )
+		.map( ( [ canonicalId, candidate ] ) => ( {
 			canonicalId,
 			options: candidate.implementations,
 			requiredKeepGatewayId: candidate.requiredKeepGatewayId,
@@ -63,8 +63,13 @@ export const buildDuplicateResolutionRows = (
 				/>
 			),
 			label: candidate.methodLabel || canonicalId,
-		} )
-	);
+		} ) )
+		// Required-keep methods (e.g. Card) render as the primary opt-in toggle, so surface them first.
+		.sort(
+			( a, b ) =>
+				( b.requiredKeepGatewayId ? 1 : 0 ) -
+				( a.requiredKeepGatewayId ? 1 : 0 )
+		);
 
 /**
  * Build the prepared, non-mutating express (Step 2) items from the detected express duplicates.

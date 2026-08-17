@@ -376,7 +376,7 @@ describe( 'DuplicateResolutionModal', () => {
 		expect( screen.getByText( 'Step 1 of 2' ) ).toBeInTheDocument();
 	} );
 
-	it( 'offers the required keep as an opt-in checkbox that submits it when ticked', async () => {
+	it( 'offers the required keep as an opt-in toggle that submits it when on', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: true,
 			results: [],
@@ -414,7 +414,7 @@ describe( 'DuplicateResolutionModal', () => {
 		} );
 	} );
 
-	it( 'leaves the required-keep method untouched when its checkbox is not ticked', async () => {
+	it( 'leaves the required-keep method untouched when its toggle is off', async () => {
 		const resolve = jest.fn().mockResolvedValue( {
 			success: true,
 			results: [],

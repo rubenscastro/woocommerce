@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Duplicate-resolution modal: surface the required-keep method (Card) first, render it as an opt-in toggle without a method icon, and use the WooPayments brand name in provider labels instead of the marketing suggestion title.

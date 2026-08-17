@@ -1,7 +1,7 @@
 /**
  * External dependencies
  */
-import { CheckboxControl, SelectControl } from '@wordpress/components';
+import { SelectControl, ToggleControl } from '@wordpress/components';
 import { __, sprintf } from '@wordpress/i18n';
 
 /**
@@ -61,14 +61,18 @@ export const StepRegular = ( {
 					key={ row.canonicalId }
 					className="duplicate-resolution-modal__row"
 				>
-					<div className="duplicate-resolution-modal__row-icon">
-						{ row.icon }
-					</div>
+					{ /* The required-keep row is a full-width toggle and carries no method
+					     icon; only the free-choice rows show one. */ }
+					{ ! requiredKeep && (
+						<div className="duplicate-resolution-modal__row-icon">
+							{ row.icon }
+						</div>
+					) }
 					<div className="duplicate-resolution-modal__row-details">
 						{ requiredKeep ? (
-							<CheckboxControl
+							<ToggleControl
 								__nextHasNoMarginBottom
-								className="duplicate-resolution-modal__row-checkbox"
+								className="duplicate-resolution-modal__row-toggle"
 								label={ sprintf(
 									/* translators: 1: provider name, 2: payment method name. */
 									__(
