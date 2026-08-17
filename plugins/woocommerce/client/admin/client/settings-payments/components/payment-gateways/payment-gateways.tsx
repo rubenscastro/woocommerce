@@ -26,6 +26,7 @@ import interpolateComponents from '@automattic/interpolate-components';
 import { CountrySelector } from '~/settings-payments/components/country-selector';
 import { ListPlaceholder } from '~/settings-payments/components/list-placeholder';
 import { PaymentGatewayList } from '~/settings-payments/components/payment-gateway-list';
+import { DuplicateResolutionEntry } from '~/settings-payments/components/duplicate-resolution-modal';
 import { recordPaymentsEvent } from '~/settings-payments/utils';
 
 interface PaymentGatewaysProps {
@@ -288,6 +289,9 @@ export const PaymentGateways = ( {
 					) }
 				</div>
 			</div>
+			{ /* Duplicate warning + resolution modal, shared with the Payment methods page. Sits
+			     below the "Payment providers" header and is inset to match the list rows. */ }
+			<DuplicateResolutionEntry wrapperClassName="settings-payment-gateways__duplicate-notice" />
 			{ isFetching ? (
 				<ListPlaceholder rows={ 5 } />
 			) : (

@@ -92,6 +92,25 @@ $payments-header-row-height: 38px;
 			color: $gray-900;
 		}
 
+		// The duplicate warning sits below the header, inset to the same 48px as the
+		// header and the list rows so the notice never touches the window edge or the
+		// admin menu. Mirrors the header's responsive horizontal padding.
+		&__duplicate-notice {
+			padding: $gap 48px 0;
+
+			@media screen and (max-width: $break-xlarge) {
+				padding: $gap $gap-large 0;
+			}
+
+			@media screen and (max-width: $break-medium) {
+				padding: $gap $gap 0;
+			}
+
+			.components-notice {
+				margin: 0;
+			}
+		}
+
 		// Sits immediately before the business location selector. The header is
 		// `space-between`, so push this off the title to keep it grouped with the
 		// selector on the trailing edge rather than floating in the middle.

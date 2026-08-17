@@ -8,12 +8,3 @@
 	gap: var(--wpds-dimension-gap-sm);
 	margin-top: var(--wpds-dimension-gap-sm);
 }
-
-// The notice as placed at the top of the Payment providers list.
-.settings-payments-main__duplicate-notice {
-	margin-bottom: var(--wpds-dimension-gap-md);
-
-	.components-notice {
-		margin: 0;
-	}
-}

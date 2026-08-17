@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Move the duplicate warning on the Payment providers page below the "Payment providers" header and inset it to the same 48px as the list rows, so the notice no longer spans to the window edge or under the admin menu.

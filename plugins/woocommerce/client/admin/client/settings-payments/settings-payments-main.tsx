@@ -25,7 +25,6 @@ import { OtherPaymentGateways } from '~/settings-payments/components/other-payme
 import { PaymentGateways } from '~/settings-payments/components/payment-gateways';
 import { IncentiveBanner } from '~/settings-payments/components/incentive-banner';
 import { IncentiveModal } from '~/settings-payments/components/incentive-modal';
-import { DuplicateResolutionEntry } from '~/settings-payments/components/duplicate-resolution-modal';
 import {
 	providersContainWooPaymentsInTestMode,
 	providersContainWooPaymentsInDevMode,
@@ -503,7 +502,6 @@ export const SettingsPaymentsMain = () => {
 				/>
 			) }
 			<div className="settings-payments-main__container">
-				<DuplicateResolutionEntry wrapperClassName="settings-payments-main__duplicate-notice" />
 				<PaymentGateways
 					providers={ providers }
 					installedPluginSlugs={ installedPluginSlugs }
