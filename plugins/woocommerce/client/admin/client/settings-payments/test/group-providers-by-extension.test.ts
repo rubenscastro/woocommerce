@@ -256,6 +256,69 @@ describe( 'groupProvidersByExtension', () => {
 		).toBeUndefined();
 	} );
 
+	it( 'collapses PayPal to its main gateway settings despite per-section links', () => {
+		// PayPal links each gateway to its own `section=ppcp-<id>`, but they all open the same screen,
+		// so the PayPal-scoped exception shares the main `ppcp-gateway` settings URL.
+		const paypal = ( id: string ) =>
+			gateway( id, {
+				_suggestion_id: 'paypal_full_stack',
+				plugin: {
+					slug: 'woocommerce-paypal-payments',
+					file: '',
+					status: 'active',
+				},
+				management: {
+					_links: {
+						settings: {
+							href: `admin.php?page=wc-settings&tab=checkout&section=${ id }`,
+						},
+					},
+				},
+			} );
+
+		const result = groups(
+			groupProvidersByExtension( [
+				paypal( 'ppcp-ideal' ),
+				paypal( 'ppcp-gateway' ),
+				paypal( 'ppcp-blik' ),
+			] )
+		);
+
+		expect( result[ 0 ].group.sharedSettingsUrl ).toBe(
+			'admin.php?page=wc-settings&tab=checkout&section=ppcp-gateway'
+		);
+	} );
+
+	it( 'falls back to the first PayPal child when the main gateway is absent', () => {
+		const paypal = ( id: string ) =>
+			gateway( id, {
+				_suggestion_id: 'paypal_full_stack',
+				plugin: {
+					slug: 'woocommerce-paypal-payments',
+					file: '',
+					status: 'active',
+				},
+				management: {
+					_links: {
+						settings: {
+							href: `admin.php?page=wc-settings&tab=checkout&section=${ id }`,
+						},
+					},
+				},
+			} );
+
+		const result = groups(
+			groupProvidersByExtension( [
+				paypal( 'ppcp-ideal' ),
+				paypal( 'ppcp-blik' ),
+			] )
+		);
+
+		expect( result[ 0 ].group.sharedSettingsUrl ).toBe(
+			'admin.php?page=wc-settings&tab=checkout&section=ppcp-ideal'
+		);
+	} );
+
 	it( 'does not merge gateways that only share an undefined suggestion id', () => {
 		const providers = [
 			gateway( 'x', {
