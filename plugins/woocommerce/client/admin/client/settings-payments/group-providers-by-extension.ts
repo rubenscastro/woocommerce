@@ -131,6 +131,39 @@ const sharedSettingsUrlOf = (
 	return new Set( keys ).size === 1 ? hrefs[ 0 ] : undefined;
 };
 
+// PayPal Payments plugin slug and its main gateway id.
+const PAYPAL_PLUGIN_SLUG = 'woocommerce-paypal-payments';
+const PAYPAL_MAIN_GATEWAY_ID = 'ppcp-gateway';
+
+/**
+ * The shared settings URL for a PayPal group, or `undefined` when the group is not PayPal.
+ *
+ * PayPal renders every one of its gateways on a single settings screen but links each to its own
+ * `section=ppcp-<id>`, so the generic {@see sharedSettingsUrlOf} check never recognises them as
+ * shared and each child keeps a redundant Manage button. This is a deliberately narrow, PayPal-scoped
+ * exception: it collapses the group to the main `ppcp-gateway` settings page (falling back to the
+ * first child's, which opens the same screen). Every other extension keeps the generic behaviour and
+ * must declare a genuinely shared settings URL — as Mollie does by routing all its gateways to one
+ * `mollie_settings` page — to earn a single Manage button.
+ */
+const paypalSharedSettingsUrl = (
+	children: PaymentGatewayProvider[]
+): string | undefined => {
+	const isPayPalGroup = children.every(
+		( child ) => child.plugin?.slug === PAYPAL_PLUGIN_SLUG
+	);
+
+	if ( ! isPayPalGroup ) {
+		return undefined;
+	}
+
+	const mainGateway =
+		children.find( ( child ) => child.id === PAYPAL_MAIN_GATEWAY_ID ) ??
+		children[ 0 ];
+
+	return mainGateway?.management?._links?.settings?.href;
+};
+
 const buildGroup = (
 	id: string,
 	children: PaymentGatewayProvider[],
@@ -150,7 +183,11 @@ const buildGroup = (
 			first.title,
 		icon: suggestion?.icon || first.icon,
 		children,
-		sharedSettingsUrl: sharedSettingsUrlOf( children ),
+		// PayPal is a scoped exception (all its gateways share one settings screen it links to per
+		// section); every other extension must declare a genuinely shared settings URL.
+		sharedSettingsUrl:
+			paypalSharedSettingsUrl( children ) ??
+			sharedSettingsUrlOf( children ),
 	};
 };
 

@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Payment providers page: collapse PayPal's gateways to a single Manage button on the group parent. PayPal links each gateway to its own section but renders them all on one settings screen, which the generic same-destination check cannot see; a narrow, PayPal-scoped exception routes the group to the main ppcp-gateway settings page. Other extensions keep the generic behaviour.
