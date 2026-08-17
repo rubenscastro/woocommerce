@@ -138,6 +138,28 @@ describe( 'serializePaymentMethodOrder', () => {
 		] );
 	} );
 
+	it( 'emits the parent method once when it is also listed as its own child (Stripe Card)', () => {
+		const rows: Row[] = [
+			{
+				id: 'stripe',
+				paymentMethod: method( 'stripe' ),
+				group: {
+					childGatewayIds: [ 'stripe', 'stripe_klarna' ],
+					showChildren: true,
+					optimizedCheckout: false,
+					settingsUrl: '',
+				},
+				// Card (the master `stripe` gateway) is rendered as the first child, then Klarna.
+				children: [ method( 'stripe' ), method( 'stripe_klarna' ) ],
+			},
+		];
+
+		expect( serializePaymentMethodOrder( rows ) ).toEqual( [
+			'stripe',
+			'stripe_klarna',
+		] );
+	} );
+
 	it( 'emits each real method name when a provider exposes multiple methods', () => {
 		const rows: Row[] = [
 			{

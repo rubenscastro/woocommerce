@@ -150,10 +150,16 @@ class PaymentMethodDuplicatesDetector {
 	}
 
 	/**
-	 * Bucket enabled gateways under a canonical method by substring-matching their ids.
+	 * Bucket enabled gateways under a canonical method by matching their ids against keywords.
 	 *
-	 * The first keyword a gateway id matches wins, so each gateway lands in at most one keyword
-	 * bucket — the same rule the WooPayments detector uses.
+	 * A keyword matches only when it stands as a whole `_`/`-` delimited token in the gateway id, not as
+	 * a substring inside an unrelated word. This is stricter than the raw substring test the WooPayments
+	 * detector uses, and deliberately so: the short `cc` card keyword otherwise matches the "cc" inside
+	 * `stripe_us_bank_account`, pulling ACH Direct Debit into the Card group. Gateway ids are already
+	 * segmented by `_`/`-` (`stripe_ideal`, `ppcp-ideal`, `woocommerce_payments_afterpay_clearpay`), so
+	 * token matching still catches every real method while dropping those false positives.
+	 *
+	 * The first keyword a gateway id matches wins, so each gateway lands in at most one keyword bucket.
 	 *
 	 * @param array<string, WC_Payment_Gateway>                       $enabled_gateways Enabled gateways keyed by id.
 	 * @param array<string, array{keywords: string[], express: bool}> $definitions      Canonical definitions.
@@ -176,7 +182,7 @@ class PaymentMethodDuplicatesDetector {
 
 		foreach ( $enabled_gateways as $gateway_id => $gateway ) {
 			foreach ( $keyword_map as $keyword => $canonical_id ) {
-				if ( false !== strpos( (string) $gateway_id, $keyword ) ) {
+				if ( $this->keyword_matches_gateway_id( (string) $gateway_id, $keyword ) ) {
 					$groups[ $canonical_id ][] = (string) $gateway_id;
 					break;
 				}
@@ -184,6 +190,26 @@ class PaymentMethodDuplicatesDetector {
 		}
 
 		return $groups;
+	}
+
+	/**
+	 * Whether a keyword matches a gateway id as a whole `_`/`-` delimited token.
+	 *
+	 * The keyword must sit at the start/end of the id or be flanked by a `_`/`-` separator, so `cc`
+	 * matches a `..._cc_...` segment but never the letters inside `account`. The keyword may itself
+	 * contain separators (e.g. `apple_pay`), which are treated literally.
+	 *
+	 * @param string $gateway_id The gateway id.
+	 * @param string $keyword    The keyword to match.
+	 *
+	 * @return bool
+	 */
+	private function keyword_matches_gateway_id( string $gateway_id, string $keyword ): bool {
+		if ( '' === $keyword ) {
+			return false;
+		}
+
+		return 1 === preg_match( '/(?:^|[_-])' . preg_quote( $keyword, '/' ) . '(?:$|[_-])/', $gateway_id );
 	}
 
 	/**

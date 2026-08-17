@@ -414,8 +414,13 @@ const buildRows = (
 	return paymentMethods.flatMap( ( paymentMethod ) => {
 		const gatewayId = gatewayIdOf( paymentMethod );
 
-		// Rendered under its parent instead, or not at all.
-		if ( groupedChildIds.has( gatewayId ) ) {
+		// Rendered under its parent instead, or not at all — unless it is itself a group parent. Stripe's
+		// master `stripe` gateway is both the group header and its own Card child, so it must still emit
+		// its header row rather than be skipped as a child.
+		if (
+			groupedChildIds.has( gatewayId ) &&
+			! groupedProviders[ gatewayId ]
+		) {
 			return [];
 		}
 
@@ -444,12 +449,19 @@ const buildRows = (
  *   `name` the row stands for (e.g. `stripe`), not a synthetic provider/group id;
  * - a grouped row with Optimized Checkout off emits its method's `name` followed by each nested
  *   child method's `name`, in the order the checkout renders them.
+ *
+ * When a group lists its own parent as a child — Stripe's Card is the master `stripe` gateway, shown
+ * both as the "Stripe" header and as a "Card" child — that name would appear twice, so duplicates are
+ * collapsed to their first occurrence and each method is emitted once.
  */
-export const serializePaymentMethodOrder = ( rows: Row[] ): string[] =>
-	rows.flatMap( ( row ) => [
+export const serializePaymentMethodOrder = ( rows: Row[] ): string[] => {
+	const order = rows.flatMap( ( row ) => [
 		row.paymentMethod.name,
 		...row.children.map( ( child ) => child.name ),
 	] );
+
+	return order.filter( ( name, index ) => order.indexOf( name ) === index );
+};
 
 /**
  * Whether two ordered id lists are identical.
@@ -766,18 +778,24 @@ export const SettingsPaymentsMethods = () => {
 													) }
 												/>
 											) }
-											{ isMethodDuplicate(
-												row.paymentMethod,
-												duplicateGatewayIds
-											) && (
-												<StatusBadge
-													status="not_supported"
-													message={ __(
-														'Duplicated',
-														'woocommerce'
-													) }
-												/>
-											) }
+											{ /* A group-header row renders as the provider, not a
+											     method, so a duplicate badge there is misleading —
+											     its duplicated methods are annotated on their own
+											     child rows below. Standalone method rows still show
+											     it (e.g. WooPayments Card). */ }
+											{ ! row.group &&
+												isMethodDuplicate(
+													row.paymentMethod,
+													duplicateGatewayIds
+												) && (
+													<StatusBadge
+														status="not_supported"
+														message={ __(
+															'Duplicated',
+															'woocommerce'
+														) }
+													/>
+												) }
 										</span>
 									</div>
 									<div className="woocommerce-list__item-after centered no-buttons">
@@ -843,15 +861,31 @@ export const SettingsPaymentsMethods = () => {
 									<div className="woocommerce-list__item-inner">
 										<div className="woocommerce-list__item-before">
 											<DragHandleSpacer />
-											{ /* Nested rows use the rectangle artwork. */ }
-											<MethodIcon
-												paymentMethod={ child }
-												icons={ providerAssets }
-												pluginSlug={ pluginSlugFor(
-													child
-												) }
-												shape="rectangle"
-											/>
+											{ /* Nested rows use the rectangle artwork. A master
+											     gateway shown as its own child (Stripe's `stripe`
+											     standing in for Card) represents the Card method, not
+											     the provider, so it gets the generic card icon rather
+											     than the provider logo its id would otherwise match. */ }
+											{ groupedProviders[
+												gatewayIdOf( child )
+											] ? (
+												<img
+													className="woocommerce-list__item-image settings-payments-methods__icon settings-payments-methods__icon--rectangle"
+													src={
+														providerAssets.generic
+													}
+													alt=""
+												/>
+											) : (
+												<MethodIcon
+													paymentMethod={ child }
+													icons={ providerAssets }
+													pluginSlug={ pluginSlugFor(
+														child
+													) }
+													shape="rectangle"
+												/>
+											) }
 										</div>
 										<div className="woocommerce-list__item-text">
 											<span className="woocommerce-list__item-title">

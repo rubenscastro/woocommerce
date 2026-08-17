@@ -67,6 +67,16 @@ class StripeOptimizedCheckoutAdapter {
 
 			$optimized_checkout = $this->is_optimized_checkout_active( $parent_gateway );
 
+			// Stripe's Card method is served by the master `stripe` gateway itself, not a split
+			// `stripe_card` gateway, so the sibling collection above misses it. When Optimized Checkout is
+			// off and Card is effectively enabled, list it as a child too, so it appears alongside the
+			// other methods. It stays out when OC is on (methods are not individually exposed then). The
+			// master id is deliberately both the group parent and its own Card child; the client renders
+			// the parent header once and the Card child row separately.
+			if ( ! $optimized_checkout && $this->is_card_enabled( $parent_gateway ) ) {
+				array_unshift( $child_gateway_ids, self::PARENT_GATEWAY_ID );
+			}
+
 			return array(
 				self::PARENT_GATEWAY_ID => array(
 					'childGatewayIds'   => $child_gateway_ids,
@@ -97,6 +107,26 @@ class StripeOptimizedCheckoutAdapter {
 		}
 
 		return (bool) $gateway->is_optimized_checkout_active();
+	}
+
+	/**
+	 * Whether Stripe's Card method is one of its effectively enabled methods.
+	 *
+	 * The master `stripe` gateway's own `enabled` flag reflects the whole provider, not the Card method,
+	 * so Card is read from Stripe's effective enabled-method list (which respects Payment Method
+	 * Configurations when active). Missing the accessor degrades to false, so Card is simply not listed
+	 * as a child rather than shown when it may not be enabled.
+	 *
+	 * @param object $gateway The Stripe parent gateway.
+	 *
+	 * @return bool
+	 */
+	private function is_card_enabled( object $gateway ): bool {
+		if ( ! method_exists( $gateway, 'get_upe_enabled_payment_method_ids' ) ) {
+			return false;
+		}
+
+		return in_array( 'card', (array) $gateway->get_upe_enabled_payment_method_ids(), true );
 	}
 
 	/**

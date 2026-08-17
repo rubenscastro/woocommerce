@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Payment method duplicate spike follow-ups: match canonical keywords on whole `_`/`-` segments so the short `cc` card keyword no longer pulls ACH (`stripe_us_bank_account`) into the Card group; suppress the Duplicated badge on a group-header row (it renders as the provider) while keeping it on the duplicated child rows; and nest Stripe's Card method under the Stripe provider row with the generic card icon, so it is a selectable option whose duplicate resolves by disabling only Stripe Card.
