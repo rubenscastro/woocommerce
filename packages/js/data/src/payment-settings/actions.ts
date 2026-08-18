@@ -15,6 +15,7 @@ import {
 	SuggestedPaymentsExtensionCategory,
 	EnableGatewayResponse,
 	DuplicateResolutionReport,
+	ExpressDuplicateResolutionReport,
 } from './types';
 import { WC_ADMIN_NAMESPACE } from '../constants';
 
@@ -185,6 +186,37 @@ export function* resolvePaymentMethodDuplicates(
 			'/settings/payments/payment-methods/duplicates/resolve',
 		method: 'POST',
 		data: { selections },
+	} );
+
+	return result;
+}
+
+/**
+ * Resolve duplicated express checkout methods.
+ *
+ * POSTs the merchant's per-method provider choices (canonical express method ID => the control unit ID
+ * that should provide it). `expectedLostMethods` is what the merchant was shown as being disabled by
+ * this change: the server recomputes the impact from live state and refuses the request if it no
+ * longer matches, so a stale preview can never silently disable something the merchant never saw.
+ *
+ * @param {Record<string, string>} selections          Map of express method ID to control unit ID.
+ * @param {string[]}               expectedLostMethods Express methods the merchant was shown as being disabled.
+ *
+ * @return {Generator<unknown, ExpressDuplicateResolutionReport, unknown>} The server resolution report.
+ */
+export function* resolveExpressMethodDuplicates(
+	selections: Record< string, string >,
+	expectedLostMethods: string[]
+) {
+	const result: ExpressDuplicateResolutionReport = yield apiFetch( {
+		path:
+			WC_ADMIN_NAMESPACE +
+			'/settings/payments/express-methods/duplicates/resolve',
+		method: 'POST',
+		data: {
+			selections,
+			expected_lost_methods: expectedLostMethods,
+		},
 	} );
 
 	return result;

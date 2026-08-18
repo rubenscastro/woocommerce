@@ -7,6 +7,8 @@ use Automattic\WooCommerce\Blocks\Assets\AssetDataRegistry;
 use Automattic\WooCommerce\Blocks\Package;
 use Automattic\WooCommerce\Blocks\Payments\Api as BlocksPaymentsApi;
 use Automattic\WooCommerce\Blocks\Payments\PaymentMethodRegistry;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnit;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnits;
 use ReflectionClass;
 use Throwable;
 use WC_Settings_Payment_Gateways;
@@ -260,15 +262,33 @@ class BlocksPaymentMethodsSpikeController {
 			$context['methodIcons']
 		);
 
+		$control_units = ( new ExpressControlUnits() )->get_units();
+
+		$express_duplicates = $this->get_express_duplicate_groups(
+			$duplicates['express'],
+			$control_units,
+			$context['gatewayPlugins'],
+			$context['providerIcons'],
+			$context['methodIcons']
+		);
+
 		$asset_registry->add(
 			self::ASSET_DATA_KEY,
 			array_merge(
 				array(
-					'groupedProviders'   => $grouped_providers,
-					'duplicates'         => $duplicates,
+					'groupedProviders'    => $grouped_providers,
+					'duplicates'          => $duplicates,
 					// The provider options the resolution modal offers per resolvable duplicate.
 					// Only regular methods the representation surfaces individually appear here.
-					'duplicateProviders' => $duplicate_providers,
+					'duplicateProviders'  => $duplicate_providers,
+					// The same, for express wallets: one entry per duplicated wallet, whose options
+					// are control units rather than gateways.
+					'expressDuplicates'   => $express_duplicates,
+					// The full unit graph, so the modal can preview what a choice would disable.
+					'expressControlUnits' => $this->serialize_control_units( $control_units ),
+					// Labels for every wallet in the graph, including ones that are not themselves
+					// duplicated — a consequence often names exactly such a wallet.
+					'expressWalletLabels' => $this->get_express_wallet_labels( $duplicates['express'], $control_units ),
 				),
 				$context
 			)
@@ -278,9 +298,357 @@ class BlocksPaymentMethodsSpikeController {
 		// enqueued. The methods page pulls that in through the payment-method scripts it enqueues; the
 		// providers page enqueues none, so ensure it here when there is a duplicate notice to surface —
 		// otherwise the data would be stored but never reach the client. No-op if already enqueued.
-		if ( ! empty( $duplicate_providers ) && wp_script_is( 'wc-settings', 'registered' ) ) {
+		if ( ( ! empty( $duplicate_providers ) || ! empty( $express_duplicates ) ) && wp_script_is( 'wc-settings', 'registered' ) ) {
 			wp_enqueue_script( 'wc-settings' );
 		}
+	}
+
+	/**
+	 * The decisions the resolution modal offers for duplicated express methods.
+	 *
+	 * The merchant makes **one choice per decision group**, and an option is a **provider** — not a
+	 * gateway, and not a control unit. Both of those follow from how wallets are really controlled:
+	 *
+	 * - A provider can offer a wallet through several gateway ids, or through several control units
+	 *   (PayPal runs Apple Pay and Google Pay as two independent units). Those are one choice to the
+	 *   merchant — "keep PayPal" — so an option unions everything that provider contributes.
+	 * - A provider whose single setting controls several wallets ties those wallets together. Asking
+	 *   separately for each would let the merchant express combinations that cannot exist, so the
+	 *   wallets it binds are decided together, in one group.
+	 *
+	 * Groups are therefore the connected components of "wallets linked by a shared control unit",
+	 * which also means every wallet a participating unit touches is inside the group it belongs to —
+	 * so a choice can never disable a method belonging to some other decision.
+	 *
+	 * An option carries the subset of the group's methods it actually provides. Where that is less
+	 * than the whole group, the difference is exactly what the modal warns will be disabled.
+	 *
+	 * @param array<string, string[]> $express_groups  The detector's `express` output.
+	 * @param ExpressControlUnit[]    $control_units   The registered control units.
+	 * @param array<string, string>   $gateway_plugins Gateway id => owning plugin slug.
+	 * @param array<string, string>   $provider_icons  Plugin slug => provider logo URL.
+	 * @param array<string, string>   $method_icons    Bundled method icon slug => URL (square set).
+	 *
+	 * @return array<int, array{id: string, walletIds: string[], label: string, icons: string[], options: array<int, array{providerSlug: string, providerLabel: string, providerIcon: string, controlUnitIds: string[], covers: string[], supportsDisabled: string[], canDisable: bool}>}>
+	 */
+	private function get_express_duplicate_groups( array $express_groups, array $control_units, array $gateway_plugins, array $provider_icons, array $method_icons = array() ): array {
+		try {
+			if ( empty( $express_groups ) ) {
+				return array();
+			}
+
+			// Everything that participates in a duplicate, keyed by wallet, as a provider-agnostic
+			// "who offers this" map. Gateways no unit claims stand in for themselves, so a provider
+			// without an adapter is still offered rather than silently dropped.
+			$offers = array();
+
+			foreach ( $express_groups as $wallet_id => $gateway_ids ) {
+				$wallet_id = (string) $wallet_id;
+
+				foreach ( (array) $gateway_ids as $gateway_id ) {
+					$gateway_id = (string) $gateway_id;
+					$unit       = $this->find_unit_for_gateway( $gateway_id, $control_units );
+					$key        = null === $unit ? $gateway_id : $unit->get_id();
+
+					$offers[ $wallet_id ][ $key ] = array(
+						'unit'        => $unit,
+						'gateway_id'  => $gateway_id,
+						'plugin_slug' => null !== $unit && '' !== $unit->get_provider_slug()
+							? $unit->get_provider_slug()
+							: ( $gateway_plugins[ $gateway_id ] ?? '' ),
+					);
+				}
+			}
+
+			$plugin_names = $this->get_plugin_names();
+			$result       = array();
+
+			foreach ( $this->group_express_wallets( array_keys( $offers ), $offers ) as $duplicated_ids ) {
+				// Everything the participating providers offer, keyed by provider.
+				$options    = array();
+				$resolvable = true;
+
+				foreach ( $duplicated_ids as $wallet_id ) {
+					foreach ( $offers[ $wallet_id ] ?? array() as $key => $offer ) {
+						// Resolving means turning every provider but one off, and only a control
+						// unit can be turned off. A participant with no unit could therefore be
+						// kept but never dropped, so the decision is only half answerable — and
+						// offering half a decision means some choices fail after the merchant
+						// commits. Drop the whole decision instead of asking a question that
+						// cannot be honoured either way.
+						if ( null === $offer['unit'] ) {
+							$resolvable = false;
+						}
+
+						// Options are keyed by provider, so several units of one provider — and the
+						// several methods they cover — read as the single choice they are.
+						$provider_key = '' !== $offer['plugin_slug'] ? $offer['plugin_slug'] : $key;
+
+						if ( ! isset( $options[ $provider_key ] ) ) {
+							$options[ $provider_key ] = array(
+								'providerSlug'     => $offer['plugin_slug'],
+								'providerLabel'    => $this->get_provider_brand_label( $offer['plugin_slug'], $plugin_names ),
+								'providerIcon'     => '' !== $offer['plugin_slug'] ? ( $provider_icons[ $offer['plugin_slug'] ] ?? '' ) : '',
+								'controlUnitIds'   => array(),
+								'covers'           => array(),
+								'supportsDisabled' => array(),
+								'canDisable'       => true,
+							);
+						}
+
+						$options[ $provider_key ]['controlUnitIds'][] = $key;
+
+						// A unit's whole reach counts, not just the method that surfaced it. That is
+						// what pulls a method which is *not* itself duplicated into the decision —
+						// the Google Pay in "choosing PayPal for Apple Pay will also disable Google
+						// Pay" is exactly such a method.
+						$options[ $provider_key ]['covers'] = array_merge(
+							$options[ $provider_key ]['covers'],
+							null === $offer['unit'] ? array( $wallet_id ) : $offer['unit']->get_wallets()
+						);
+
+						if ( null !== $offer['unit'] && ! $offer['unit']->can_disable() ) {
+							$options[ $provider_key ]['canDisable'] = false;
+						}
+					}
+				}
+
+				// The decision covers every method the participating providers touch, so nothing can
+				// be turned off without having been shown here.
+				$wallet_ids = $duplicated_ids;
+
+				foreach ( $options as $provider_key => $option ) {
+					$options[ $provider_key ]['controlUnitIds'] = array_values( array_unique( $option['controlUnitIds'] ) );
+					$options[ $provider_key ]['covers']         = array_values( array_unique( $option['covers'] ) );
+
+					$wallet_ids = array_merge( $wallet_ids, $options[ $provider_key ]['covers'] );
+				}
+
+				$wallet_ids = array_values( array_unique( $wallet_ids ) );
+
+				// An option only "covers" what is actually part of this decision.
+				foreach ( $options as $provider_key => $option ) {
+					$options[ $provider_key ]['covers'] = array_values(
+						array_intersect( $option['covers'], $wallet_ids )
+					);
+
+					// What an option does not cover is not automatically what its provider cannot
+					// offer. Both cases end with the method turned off, but only one of them is the
+					// merchant's to undo, so they are recorded apart.
+					$options[ $provider_key ]['supportsDisabled'] = $this->get_disabled_support(
+						$option['providerSlug'],
+						array_diff( $wallet_ids, $options[ $provider_key ]['covers'] ),
+						$control_units
+					);
+				}
+
+				$labels = array();
+				$icons  = array();
+
+				foreach ( $wallet_ids as $wallet_id ) {
+					$labels[] = $this->get_canonical_method_label( $wallet_id );
+					$icon     = $this->get_canonical_method_icon( $wallet_id, $method_icons );
+
+					if ( '' !== $icon ) {
+						$icons[] = $icon;
+					}
+				}
+
+				if ( ! $resolvable ) {
+					continue;
+				}
+
+				$result[] = array(
+					'id'        => implode( '+', $wallet_ids ),
+					'walletIds' => $wallet_ids,
+					'label'     => $this->join_method_labels( $labels ),
+					'icons'     => $icons,
+					'options'   => array_values( $options ),
+				);
+			}
+
+			return $result;
+		} catch ( Throwable $e ) {
+			// Express metadata is advisory; never let it break the settings page.
+			return array();
+		}
+	}
+
+	/**
+	 * The methods a provider offers but currently has switched off.
+	 *
+	 * A method the chosen provider does not carry gets turned off either way, but the reason is not
+	 * the same thing to the merchant. "This provider does not offer it" is final. "This provider
+	 * offers it and it is switched off" is a state they can change in that provider's own settings,
+	 * and then the method survives the resolution. Reporting the second as the first says something
+	 * untrue about the provider and hides the one action that keeps the method.
+	 *
+	 * Only registered control units count. A provider that supports a method somewhere in its
+	 * product but exposes no unit for it is, from here, indistinguishable from one that does not
+	 * support it at all, so it is left out rather than guessed at.
+	 *
+	 * @param string               $provider_slug The provider's plugin slug.
+	 * @param string[]             $wallet_ids    The methods the provider does not currently carry.
+	 * @param ExpressControlUnit[] $control_units The registered control units.
+	 *
+	 * @return string[] The subset of $wallet_ids the provider has a switched-off unit for.
+	 */
+	private function get_disabled_support( string $provider_slug, array $wallet_ids, array $control_units ): array {
+		if ( '' === $provider_slug || empty( $wallet_ids ) ) {
+			return array();
+		}
+
+		$supported = array();
+
+		foreach ( $control_units as $unit ) {
+			if ( ! $unit instanceof ExpressControlUnit || $unit->is_enabled() || $provider_slug !== $unit->get_provider_slug() ) {
+				continue;
+			}
+
+			foreach ( $wallet_ids as $wallet_id ) {
+				if ( $unit->provides_wallet( (string) $wallet_id ) ) {
+					$supported[ (string) $wallet_id ] = true;
+				}
+			}
+		}
+
+		return array_keys( $supported );
+	}
+
+	/**
+	 * Group wallets that must be decided together.
+	 *
+	 * Two wallets belong to the same decision when some participating control unit provides both:
+	 * that unit cannot be kept for one and dropped for the other, so offering them separately would
+	 * invite a combination that cannot exist. Grouping is transitive, so a chain of overlapping units
+	 * collapses into a single decision.
+	 *
+	 * @param string[]                                   $wallet_ids The duplicated wallet ids.
+	 * @param array<string, array<string, array<mixed>>> $offers     Participating offers keyed by wallet then unit.
+	 *
+	 * @return array<int, string[]> Groups of wallet ids.
+	 */
+	private function group_express_wallets( array $wallet_ids, array $offers ): array {
+		$groups = array();
+
+		foreach ( $wallet_ids as $wallet_id ) {
+			$merged_into = null;
+
+			foreach ( $groups as $index => $group ) {
+				foreach ( $group as $member ) {
+					// A shared unit between the two wallets binds them into one decision.
+					if ( array_intersect_key( $offers[ $wallet_id ], $offers[ $member ] ) ) {
+						$merged_into = $index;
+						break 2;
+					}
+				}
+			}
+
+			if ( null === $merged_into ) {
+				$groups[] = array( $wallet_id );
+				continue;
+			}
+
+			$groups[ $merged_into ][] = $wallet_id;
+		}
+
+		return $groups;
+	}
+
+	/**
+	 * Join method labels into a readable list.
+	 *
+	 * @param string[] $labels The method labels.
+	 *
+	 * @return string
+	 */
+	private function join_method_labels( array $labels ): string {
+		if ( count( $labels ) < 2 ) {
+			return (string) ( $labels[0] ?? '' );
+		}
+
+		return sprintf(
+			/* translators: 1: all express method names except the last, comma separated. 2: the last express method name. */
+			esc_html__( '%1$s and %2$s', 'woocommerce' ),
+			implode( ', ', array_slice( $labels, 0, -1 ) ),
+			end( $labels )
+		);
+	}
+
+	/**
+	 * The control unit that claims a gateway id, if any.
+	 *
+	 * @param string               $gateway_id    The gateway id.
+	 * @param ExpressControlUnit[] $control_units The registered control units.
+	 *
+	 * @return ExpressControlUnit|null
+	 */
+	private function find_unit_for_gateway( string $gateway_id, array $control_units ): ?ExpressControlUnit {
+		foreach ( $control_units as $unit ) {
+			if ( in_array( $gateway_id, $unit->get_gateway_ids(), true ) ) {
+				return $unit;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Readable labels for every wallet the modal may need to name.
+	 *
+	 * Wider than the duplicated wallets on purpose. The most important sentence the modal shows —
+	 * "Google Pay will be disabled" — names a wallet that is typically *not* duplicated, and so has
+	 * no row and no candidate of its own. Labelling only duplicated wallets would leave the merchant
+	 * reading a raw id at exactly the moment the message matters most.
+	 *
+	 * @param array<string, string[]> $express_groups The detector's `express` output.
+	 * @param ExpressControlUnit[]    $control_units  The registered control units.
+	 *
+	 * @return array<string, string> Wallet id => label.
+	 */
+	private function get_express_wallet_labels( array $express_groups, array $control_units ): array {
+		$wallet_ids = array_keys( $express_groups );
+
+		foreach ( $control_units as $unit ) {
+			foreach ( $unit->get_wallets() as $wallet_id ) {
+				$wallet_ids[] = $wallet_id;
+			}
+		}
+
+		$labels = array();
+
+		foreach ( array_unique( $wallet_ids ) as $wallet_id ) {
+			$wallet_id            = (string) $wallet_id;
+			$labels[ $wallet_id ] = $this->get_canonical_method_label( $wallet_id );
+		}
+
+		return $labels;
+	}
+
+	/**
+	 * Flatten control units for the client payload.
+	 *
+	 * @param ExpressControlUnit[] $control_units The registered control units.
+	 *
+	 * @return array<int, array{id: string, providerSlug: string, providerLabel: string, gatewayIds: string[], wallets: string[], enabled: bool, canDisable: bool, requires: string[]}>
+	 */
+	private function serialize_control_units( array $control_units ): array {
+		$serialized = array();
+
+		foreach ( $control_units as $unit ) {
+			$serialized[] = array(
+				'id'            => $unit->get_id(),
+				'providerSlug'  => $unit->get_provider_slug(),
+				'providerLabel' => $unit->get_provider_label(),
+				'gatewayIds'    => $unit->get_gateway_ids(),
+				'wallets'       => $unit->get_wallets(),
+				'enabled'       => $unit->is_enabled(),
+				'canDisable'    => $unit->can_disable(),
+				'requires'      => $unit->get_requires(),
+			);
+		}
+
+		return $serialized;
 	}
 
 	/**

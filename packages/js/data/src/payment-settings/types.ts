@@ -243,6 +243,8 @@ export type Duplicates = {
 
 export type DuplicateResolutionStatus =
 	| 'disabled'
+	// The provider reported success, but a fresh detection still finds the method enabled.
+	| 'not_applied'
 	| 'failed'
 	| 'unsupported'
 	| 'skipped';
@@ -253,10 +255,25 @@ export type DuplicateDisableOutcome = {
 	message: string;
 };
 
+/**
+ * An express method turned off because something it depends on was.
+ *
+ * Providers commonly serve express methods off another of their own methods, so consolidating a
+ * regular duplicate can take express methods with it. Reported separately because the merchant did
+ * not choose it — they were warned about it.
+ */
+export type ExpressKnockOnOutcome = {
+	controlUnitId: string;
+	providerLabel: string;
+	status: DuplicateResolutionStatus;
+	message: string;
+};
+
 export type DuplicateResolutionResult = {
 	canonicalId: string;
 	kept: string;
 	disabled: DuplicateDisableOutcome[];
+	expressDisabled: ExpressKnockOnOutcome[];
 	error: string | null;
 };
 
@@ -264,4 +281,30 @@ export type DuplicateResolutionReport = {
 	success: boolean;
 	results: DuplicateResolutionResult[];
 	duplicates: Duplicates;
+};
+
+/**
+ * The outcome of turning one express control unit off.
+ *
+ * Keyed by control unit, not gateway: an express control unit may span several gateways and carry
+ * several express methods, all of which stop being offered together.
+ */
+export type ExpressDisableOutcome = {
+	controlUnitId: string;
+	status: DuplicateResolutionStatus;
+	message: string;
+};
+
+/**
+ * The server's report for an express duplicate resolution.
+ *
+ * `lost_methods` is what actually stopped being offered, recomputed server-side rather than taken
+ * from the client. `error` carries the refusal reason when the server declined to act at all.
+ */
+export type ExpressDuplicateResolutionReport = {
+	success: boolean;
+	error: string | null;
+	disabled: ExpressDisableOutcome[];
+	lost_wallets: string[];
+	duplicates: DuplicateGroups;
 };

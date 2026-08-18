@@ -3,6 +3,8 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Internal\Admin\Settings;
 
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnitDisablers;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnits;
 use Throwable;
 use WC_Payment_Gateway;
 
@@ -22,9 +24,10 @@ defined( 'ABSPATH' ) || exit;
  * contributed through the `woocommerce_payment_method_duplicate_resolvers` filter, or the core
  * {@see GenericPaymentMethodDuplicateResolver} when the target is positively a standalone gateway.
  *
- * Scope note: this spike resolves regular checkout methods only. Express (wallet) duplicates are never
- * accepted here; the mutation contract will be extended deliberately when express resolution is
- * designed against its real semantics.
+ * Scope note: this service resolves regular checkout methods only — an express duplicate is never
+ * accepted as a selection here. It does, however, turn off express methods that cannot outlive a
+ * gateway it is disabling: providers commonly serve their wallets off another of their own methods,
+ * and leaving them orphaned either fails the whole update (Stripe) or silently breaks them (Square).
  *
  * The client submits only *what to keep*; this service re-runs detection server-side and derives *what
  * to disable* from fresh state, so stale modal data can never disable an unrelated or already-resolved
@@ -37,11 +40,39 @@ defined( 'ABSPATH' ) || exit;
 class PaymentMethodDuplicatesResolver {
 
 	/**
+	 * The express control units, used to find methods that depend on a gateway being disabled.
+	 *
+	 * @var ExpressControlUnits
+	 */
+	private ExpressControlUnits $express_units;
+
+	/**
+	 * The express control-unit disabler.
+	 *
+	 * @var ExpressControlUnitDisablers
+	 */
+	private ExpressControlUnitDisablers $express_disablers;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param ExpressControlUnits|null         $express_units     The express control units.
+	 * @param ExpressControlUnitDisablers|null $express_disablers The express control-unit disabler.
+	 */
+	public function __construct(
+		?ExpressControlUnits $express_units = null,
+		?ExpressControlUnitDisablers $express_disablers = null
+	) {
+		$this->express_units     = $express_units ?? new ExpressControlUnits();
+		$this->express_disablers = $express_disablers ?? new ExpressControlUnitDisablers();
+	}
+
+	/**
 	 * Resolve a batch of duplicate selections.
 	 *
 	 * @param array<string, string> $selections Map of canonical method id => the gateway id to keep enabled.
 	 *
-	 * @return array{success: bool, results: array<int, array{canonicalId: string, kept: string, disabled: array<int, array{gatewayId: string, status: string, message: string}>, error: string|null}>, duplicates: array{payment_methods: array<string, string[]>, express: array<string, string[]>}}
+	 * @return array{success: bool, results: array<int, array{canonicalId: string, kept: string, disabled: array<int, array{gatewayId: string, status: string, message: string}>, expressDisabled: array<int, array{controlUnitId: string, providerLabel: string, status: string, message: string}>, error: string|null}>, duplicates: array{payment_methods: array<string, string[]>, express: array<string, string[]>}}
 	 */
 	public function resolve( array $selections ): array {
 		$detected = $this->detect();
@@ -68,18 +99,40 @@ class PaymentMethodDuplicatesResolver {
 
 			if ( null !== $error ) {
 				$results[] = array(
-					'canonicalId' => $canonical_id,
-					'kept'        => $kept_gateway_id,
-					'disabled'    => array(),
-					'error'       => $error,
+					'canonicalId'     => $canonical_id,
+					'kept'            => $kept_gateway_id,
+					'disabled'        => array(),
+					'expressDisabled' => array(),
+					'error'           => $error,
 				);
 				$success   = false;
 				continue;
 			}
 
-			$group_ids = array_column( $candidates[ $canonical_id ]['implementations'], 'gatewayId' );
-			$targets   = array_values( array_diff( $group_ids, array( $kept_gateway_id ) ) );
-			$disabled  = array();
+			$group_ids        = array_column( $candidates[ $canonical_id ]['implementations'], 'gatewayId' );
+			$targets          = array_values( array_diff( $group_ids, array( $kept_gateway_id ) ) );
+			$disabled         = array();
+			$express_disabled = array();
+
+			// Express methods a provider serves off one of these gateways have to go first. Stripe
+			// rejects outright any configuration that would leave its wallets without Card — the
+			// whole update fails, and nothing is disabled — while Square would simply stop offering
+			// them with no error at all. Either way the dependent has to be turned off before the
+			// thing it depends on, not after.
+			foreach ( $this->dependent_express_units( $targets ) as $unit ) {
+				$outcome = $this->express_disablers->disable( $unit->get_id() );
+
+				$express_disabled[] = array(
+					'controlUnitId' => $unit->get_id(),
+					'providerLabel' => $unit->get_provider_label(),
+					'status'        => $outcome['status'],
+					'message'       => $outcome['message'] ?? '',
+				);
+
+				if ( 'disabled' !== $outcome['status'] ) {
+					$success = false;
+				}
+			}
 
 			foreach ( $targets as $target_gateway_id ) {
 				$outcome    = $this->disable_one( $target_gateway_id, $extension_resolvers, $generic, $grouped );
@@ -91,10 +144,11 @@ class PaymentMethodDuplicatesResolver {
 			}
 
 			$results[] = array(
-				'canonicalId' => $canonical_id,
-				'kept'        => $kept_gateway_id,
-				'disabled'    => $disabled,
-				'error'       => null,
+				'canonicalId'     => $canonical_id,
+				'kept'            => $kept_gateway_id,
+				'disabled'        => $disabled,
+				'expressDisabled' => $express_disabled,
+				'error'           => null,
 			);
 		}
 
@@ -103,11 +157,87 @@ class PaymentMethodDuplicatesResolver {
 		}
 
 		// Re-run detection so the response carries authoritative post-mutation state.
+		$post_state = $this->detect();
+
+		// A resolver reports its own outcome, and a resolver that writes settings the provider does
+		// not actually read will report success while nothing changed — a remote-configuration write
+		// that silently no-ops, for instance. Detection is the only impartial witness available, so
+		// a target still present in its group afterwards is reported as not applied, whatever the
+		// resolver claimed.
+		$results = $this->verify_disables( $results, $post_state );
+
+		foreach ( $results as $result ) {
+			foreach ( $result['disabled'] as $outcome ) {
+				if ( 'disabled' !== $outcome['status'] ) {
+					$success = false;
+				}
+			}
+		}
+
 		return array(
 			'success'    => $success,
 			'results'    => $results,
-			'duplicates' => $this->detect(),
+			'duplicates' => $post_state,
 		);
+	}
+
+	/**
+	 * The enabled express control units that cannot outlive the given gateways.
+	 *
+	 * @param string[] $gateway_ids The gateway ids about to be disabled.
+	 *
+	 * @return \Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnit[]
+	 */
+	private function dependent_express_units( array $gateway_ids ): array {
+		$dependent = array();
+
+		foreach ( $this->express_units->get_units() as $unit ) {
+			if ( $unit->is_enabled() && $unit->is_broken_by( $gateway_ids ) ) {
+				$dependent[] = $unit;
+			}
+		}
+
+		return $dependent;
+	}
+
+	/**
+	 * Downgrade disable outcomes that detection says did not take effect.
+	 *
+	 * @param array<int, array{canonicalId: string, kept: string, disabled: array<int, array{gatewayId: string, status: string, message: string}>, expressDisabled: array<int, array{controlUnitId: string, providerLabel: string, status: string, message: string}>, error: string|null}> $results    The per-selection results.
+	 * @param array{payment_methods: array<string, string[]>, express: array<string, string[]>}                                                                                                                                                                                            $post_state Freshly detected duplicates.
+	 *
+	 * @return array<int, array{canonicalId: string, kept: string, disabled: array<int, array{gatewayId: string, status: string, message: string}>, expressDisabled: array<int, array{controlUnitId: string, providerLabel: string, status: string, message: string}>, error: string|null}>
+	 */
+	private function verify_disables( array $results, array $post_state ): array {
+		foreach ( $results as $index => $result ) {
+			$still_present = $post_state['payment_methods'][ $result['canonicalId'] ] ?? array();
+
+			if ( empty( $still_present ) ) {
+				continue;
+			}
+
+			$verified = array();
+
+			foreach ( $result['disabled'] as $outcome ) {
+				$applied = 'disabled' !== $outcome['status']
+					|| ! in_array( $outcome['gatewayId'], $still_present, true );
+
+				$verified[] = $applied
+					? $outcome
+					: array(
+						'gatewayId' => $outcome['gatewayId'],
+						'status'    => 'not_applied',
+						'message'   => __(
+							'The provider reported success but the method is still enabled. Turn it off in that provider\'s own settings.',
+							'woocommerce'
+						),
+					);
+			}
+
+			$results[ $index ]['disabled'] = $verified;
+		}
+
+		return $results;
 	}
 
 	/**

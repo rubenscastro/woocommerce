@@ -3,6 +3,8 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Tests\Internal\Admin\Settings;
 
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnit;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnitProviderInterface;
 use Automattic\WooCommerce\Internal\Admin\Settings\PaymentMethodDuplicatesDetector;
 use WC_Payment_Gateway;
 use WC_Unit_Test_Case;
@@ -34,6 +36,7 @@ class PaymentMethodDuplicatesDetectorTest extends WC_Unit_Test_Case {
 		remove_all_filters( 'woocommerce_payment_gateways' );
 		remove_all_filters( 'woocommerce_payment_method_duplicate_definitions' );
 		remove_all_filters( 'woocommerce_payment_method_duplicate_gateway_hints' );
+		remove_all_filters( 'woocommerce_express_checkout_control_unit_providers' );
 		WC()->payment_gateways()->payment_gateways = array();
 		WC()->payment_gateways()->init();
 		parent::tearDown();
@@ -213,21 +216,53 @@ class PaymentMethodDuplicatesDetectorTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * @testdox Should report express-wallet overlap in the combined express bucket.
+	 * @testdox Should report each wallet as its own canonical express method.
 	 */
-	public function test_express_collision_uses_combined_bucket(): void {
+	public function test_express_collision_is_reported_per_wallet(): void {
 		$this->register_fake_gateways(
 			array(
 				'applepay_button' => 'yes',
-				'foo_google_pay'  => 'yes',
+				'foo_applepay'    => 'yes',
+				'a_google_pay'    => 'yes',
+				'b_google_pay'    => 'yes',
 			)
 		);
 
 		$result = $this->sut->detect();
 
-		$this->assertArrayHasKey( 'apple_pay_google_pay', $result['express'], 'Wallet overlap should land in the combined express bucket.' );
-		$this->assertCount( 2, $result['express']['apple_pay_google_pay'], 'Both wallet gateways should be grouped.' );
-		$this->assertArrayNotHasKey( 'apple_pay_google_pay', $result['payment_methods'], 'Express duplicates must not appear among regular methods.' );
+		$this->assertArrayHasKey( 'apple_pay', $result['express'], 'The Apple Pay collision should be reported on its own.' );
+		$this->assertArrayHasKey( 'google_pay', $result['express'], 'The Google Pay collision should be reported on its own.' );
+		$this->assertEqualsCanonicalizing(
+			array( 'applepay_button', 'foo_applepay' ),
+			$result['express']['apple_pay'],
+			'Only the Apple Pay gateways belong to the Apple Pay group.'
+		);
+		$this->assertEqualsCanonicalizing(
+			array( 'a_google_pay', 'b_google_pay' ),
+			$result['express']['google_pay'],
+			'Only the Google Pay gateways belong to the Google Pay group.'
+		);
+		$this->assertArrayNotHasKey( 'apple_pay', $result['payment_methods'], 'Express duplicates must not appear among regular methods.' );
+	}
+
+	/**
+	 * @testdox Should not merge two different wallets into one duplicate group.
+	 */
+	public function test_two_different_wallets_are_not_a_duplicate_of_each_other(): void {
+		$this->register_fake_gateways(
+			array(
+				'foo_applepay'   => 'yes',
+				'bar_google_pay' => 'yes',
+			)
+		);
+
+		$result = $this->sut->detect();
+
+		$this->assertSame(
+			array(),
+			$result['express'],
+			'One Apple Pay and one Google Pay implementation are two single wallets, not a collision.'
+		);
 	}
 
 	/**
@@ -239,6 +274,183 @@ class PaymentMethodDuplicatesDetectorTest extends WC_Unit_Test_Case {
 		$result = $this->sut->detect();
 
 		$this->assertSame( array(), $result['express'], 'A single wallet implementation is not a duplicate.' );
+	}
+
+	/**
+	 * @testdox Should not report one provider as a duplicate of itself when it surfaces a wallet through several gateways.
+	 */
+	public function test_one_provider_with_several_wallet_gateways_is_not_a_duplicate(): void {
+		$this->register_fake_gateways(
+			array(
+				'acme_applepay' => 'yes',
+				'acme_wallets'  => 'yes',
+			)
+		);
+		// The provider also surfaces the wallet through its master gateway, as a hint would report.
+		$this->contribute_hints( array( 'apple_pay' => array( 'acme_wallets' ) ) );
+		$this->contribute_control_units(
+			array(
+				new ExpressControlUnit(
+					'acme:wallets',
+					'acme',
+					'Acme',
+					array( 'acme_applepay', 'acme_wallets' ),
+					array( ExpressControlUnit::WALLET_APPLE_PAY ),
+					true
+				),
+			)
+		);
+
+		$result = $this->sut->detect();
+
+		$this->assertSame(
+			array(),
+			$result['express'],
+			'Two gateway ids owned by the same control unit are one implementation, not a duplicate.'
+		);
+	}
+
+	/**
+	 * @testdox Should report a duplicate when two different providers control the same wallet.
+	 */
+	public function test_two_providers_controlling_the_same_wallet_are_a_duplicate(): void {
+		$this->register_fake_gateways(
+			array(
+				'acme_applepay'  => 'yes',
+				'acme_wallets'   => 'yes',
+				'other_applepay' => 'yes',
+			)
+		);
+		$this->contribute_hints( array( 'apple_pay' => array( 'acme_wallets' ) ) );
+		$this->contribute_control_units(
+			array(
+				// A joint unit, in the shape of a provider that controls both wallets with one flag.
+				new ExpressControlUnit(
+					'acme:wallets',
+					'acme',
+					'Acme',
+					array( 'acme_applepay', 'acme_wallets' ),
+					array( ExpressControlUnit::WALLET_APPLE_PAY, ExpressControlUnit::WALLET_GOOGLE_PAY ),
+					true
+				),
+				// An independent unit, in the shape of a provider with per-wallet control.
+				new ExpressControlUnit(
+					'other:apple_pay',
+					'other',
+					'Other',
+					array( 'other_applepay' ),
+					array( ExpressControlUnit::WALLET_APPLE_PAY ),
+					true
+				),
+			)
+		);
+
+		$result = $this->sut->detect();
+
+		$this->assertArrayHasKey( 'apple_pay', $result['express'], 'Two providers offering Apple Pay is a duplicate.' );
+		$this->assertEqualsCanonicalizing(
+			array( 'acme_applepay', 'acme_wallets', 'other_applepay' ),
+			$result['express']['apple_pay'],
+			'Every contributing gateway id stays in the group; only the counting is per unit.'
+		);
+	}
+
+	/**
+	 * @testdox Should count gateways with no control unit individually.
+	 */
+	public function test_gateways_without_a_control_unit_count_individually(): void {
+		$this->register_fake_gateways(
+			array(
+				'foo_applepay' => 'yes',
+				'bar_applepay' => 'yes',
+			)
+		);
+		// No control units contributed at all.
+
+		$result = $this->sut->detect();
+
+		$this->assertArrayHasKey(
+			'apple_pay',
+			$result['express'],
+			'Without adapters, each gateway is its own implementation and the collision still reports.'
+		);
+	}
+
+	/**
+	 * @testdox Should ignore malformed control-unit providers without losing the valid ones.
+	 */
+	public function test_malformed_control_unit_providers_are_ignored(): void {
+		$this->register_fake_gateways(
+			array(
+				'acme_applepay' => 'yes',
+				'acme_wallets'  => 'yes',
+			)
+		);
+		$this->contribute_hints( array( 'apple_pay' => array( 'acme_wallets' ) ) );
+
+		add_filter(
+			'woocommerce_express_checkout_control_unit_providers',
+			static function () {
+				return array(
+					// Not a provider at all.
+					'nonsense',
+					// Throws when queried.
+					new class() implements ExpressControlUnitProviderInterface {
+						/**
+						 * Always fails.
+						 *
+						 * @return ExpressControlUnit[]
+						 */
+						public function get_control_units(): array {
+							$this->blow_up();
+
+							return array();
+						}
+
+						/**
+						 * Raise the failure this double exists to produce.
+						 *
+						 * @return void
+						 * @throws \RuntimeException Always.
+						 */
+						private function blow_up(): void {
+							throw new \RuntimeException( 'boom' );
+						}
+					},
+					// Returns junk alongside one valid unit.
+					new class() implements ExpressControlUnitProviderInterface {
+						/**
+						 * Returns a mix of invalid and valid units.
+						 *
+						 * @return array<mixed>
+						 */
+						public function get_control_units(): array {
+							return array(
+								'not-a-unit',
+								// Invalid: no gateway ids and no wallets.
+								new ExpressControlUnit( 'empty', 'x', 'X', array(), array(), true ),
+								new ExpressControlUnit(
+									'acme:wallets',
+									'acme',
+									'Acme',
+									array( 'acme_applepay', 'acme_wallets' ),
+									array( ExpressControlUnit::WALLET_APPLE_PAY ),
+									true
+								),
+							);
+						}
+					},
+				);
+			}
+		);
+
+		$result = $this->sut->detect();
+
+		$this->assertSame(
+			array(),
+			$result['express'],
+			'The one valid unit still collapses both gateway ids, despite the malformed neighbours.'
+		);
 	}
 
 	/**
@@ -265,6 +477,50 @@ class PaymentMethodDuplicatesDetectorTest extends WC_Unit_Test_Case {
 			'woocommerce_payment_method_duplicate_gateway_hints',
 			static function ( $existing ) use ( $hints ) {
 				return array_merge( (array) $existing, $hints );
+			}
+		);
+	}
+
+	/**
+	 * Contribute express control units through a fake provider.
+	 *
+	 * Replaces the registered providers entirely, so core's WooPayments/PayPal adapters cannot
+	 * influence the assertions.
+	 *
+	 * @param ExpressControlUnit[] $units The units the fake provider should report.
+	 */
+	private function contribute_control_units( array $units ): void {
+		add_filter(
+			'woocommerce_express_checkout_control_unit_providers',
+			static function () use ( $units ) {
+				return array(
+					new class( $units ) implements ExpressControlUnitProviderInterface {
+						/**
+						 * The units to report.
+						 *
+						 * @var ExpressControlUnit[]
+						 */
+						private array $units;
+
+						/**
+						 * Build a fake provider reporting a fixed set of units.
+						 *
+						 * @param ExpressControlUnit[] $units The units to report.
+						 */
+						public function __construct( array $units ) {
+							$this->units = $units;
+						}
+
+						/**
+						 * The configured units.
+						 *
+						 * @return ExpressControlUnit[]
+						 */
+						public function get_control_units(): array {
+							return $this->units;
+						}
+					},
+				);
 			}
 		);
 	}

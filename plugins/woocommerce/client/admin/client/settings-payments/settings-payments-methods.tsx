@@ -473,12 +473,13 @@ const ordersEqual = ( a: string[], b: string[] ): boolean =>
 /**
  * Human-readable labels for the canonical express methods the detector can report.
  *
- * The detector currently cannot tell Apple Pay and Google Pay apart — both signals collapse into
- * one `apple_pay_google_pay` bucket — so the label preserves that combined identity rather than
- * claiming two independent collisions. See `search_for_payment_request_buttons` in WooPayments.
+ * Each wallet is its own canonical method. A provider that controls several wallets with a single
+ * setting does not merge them here: wallet identity is what the merchant chooses for, and the
+ * coupling is a consequence of that choice rather than a property of the wallet.
  */
 const EXPRESS_METHOD_LABELS: Record< string, string > = {
-	apple_pay_google_pay: 'Apple Pay / Google Pay',
+	apple_pay: 'Apple Pay',
+	google_pay: 'Google Pay',
 };
 
 /**

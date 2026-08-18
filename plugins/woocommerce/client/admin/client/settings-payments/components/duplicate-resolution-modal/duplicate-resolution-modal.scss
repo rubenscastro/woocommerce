@@ -1,8 +1,27 @@
 .duplicate-resolution-modal {
 	.components-modal__content {
-		// Keep a stable width so the two steps don't reflow as their content changes.
-		width: 100%;
-		max-width: 640px;
+		// Width comes from the Modal's own `size="medium"` (512px), which is what the other modals in
+		// this section already use — see components/modals/modals.scss.
+		// Height has no such standard: Modal sizes only set width, so a fixed height is the only way
+		// to stop the dialog resizing between steps. A step that outgrows it scrolls inside instead.
+		height: 520px;
+		display: flex;
+		flex-direction: column;
+		box-sizing: border-box;
+	}
+
+	// The step body takes the space the footer does not, and scrolls on its own.
+	&__express,
+	&__diagnostic,
+	&__list,
+	&__description + &__list {
+		min-height: 0;
+	}
+
+	&__step-body {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow-y: auto;
 	}
 
 	&__description {
@@ -68,6 +87,17 @@
 	&__diagnostic-lines {
 		margin: var(--wpds-dimension-gap-xs) 0 0;
 		padding-inline-start: var(--wpds-dimension-gap-lg);
+
+		// What survived vs what was turned off is the one thing worth reading at a glance, so it is
+		// carried by colour as well as by the wording — never by colour alone.
+		.is-kept {
+			color: var(--Alias-text-text-success, #144722);
+		}
+
+		.is-disabled,
+		.is-failed {
+			color: var(--Alias-text-text-error, #8a2424);
+		}
 	}
 
 	&__row-details {
@@ -85,30 +115,51 @@
 		width: 100%;
 	}
 
-	&__express-list {
-		margin: 0;
-		padding: 0;
-		list-style: none;
+	// One decision per group: the methods it covers are shown stacked above their shared label, so
+	// it reads as a single choice rather than a row per method.
+	&__express-group + &__express-group {
+		margin-top: var(--wpds-dimension-padding-2xl);
+	}
+
+	&__express-icons {
 		display: flex;
-		flex-direction: column;
-		gap: var(--wpds-dimension-gap-sm);
+		gap: var(--wpds-dimension-gap-xs);
+		margin-bottom: var(--wpds-dimension-gap-sm);
+
+		img {
+			width: 40px;
+			height: 40px;
+			border-radius: var(--wpds-dimension-radius-sm);
+		}
 	}
 
-	&__express-name {
-		font-weight: var(--wpds-typography-font-weight-medium);
-		margin-inline-end: var(--wpds-dimension-gap-sm);
-	}
+	// The impact notices sit directly under the select they describe, so they need their own
+	// separation from it — a Notice carries no outer margin of its own.
+	&__express-consequence,
+	&__express-blocked,
+	&__prerequisite {
+		margin: var(--wpds-dimension-gap-lg) 0 0;
 
-	&__express-providers {
-		color: var(--wpds-color-content-neutral-weak);
+		p {
+			margin: 0;
+		}
+
+		// The bold lead line and its explanation are one block, not two paragraphs.
+		strong + p {
+			margin-top: var(--wpds-dimension-gap-2xs);
+		}
 	}
 
 	&__footer {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		// Extra breathing room between the last method row and the actions.
-		margin-top: var(--wpds-dimension-padding-3xl);
+		// Pinned to the bottom of the fixed-height dialog, so the actions sit in the same place on
+		// every step rather than following the content up and down.
+		flex: 0 0 auto;
+		margin-top: var(--wpds-dimension-padding-2xl);
+		padding-top: var(--wpds-dimension-padding-lg);
+		border-top: 1px solid var(--wpds-color-stroke-surface-neutral-weak);
 	}
 
 	&__step-indicator {

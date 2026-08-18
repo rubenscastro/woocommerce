@@ -3,6 +3,9 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Tests\Internal\Admin\Settings;
 
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnit;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnitDisablerInterface;
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnitProviderInterface;
 use Automattic\WooCommerce\Internal\Admin\Settings\PaymentMethodDuplicateResolverInterface;
 use Automattic\WooCommerce\Internal\Admin\Settings\PaymentMethodDuplicatesResolver;
 use WC_Payment_Gateway;
@@ -20,6 +23,8 @@ class PaymentMethodDuplicatesResolverTest extends WC_Unit_Test_Case {
 		remove_all_filters( 'woocommerce_payment_gateways' );
 		remove_all_filters( 'woocommerce_payment_method_duplicate_definitions' );
 		remove_all_filters( 'woocommerce_payment_method_duplicate_resolvers' );
+		remove_all_filters( 'woocommerce_express_checkout_control_unit_providers' );
+		remove_all_filters( 'woocommerce_express_checkout_control_unit_disablers' );
 		WC()->payment_gateways()->payment_gateways = array();
 		WC()->payment_gateways()->init();
 		parent::tearDown();
@@ -295,22 +300,22 @@ class PaymentMethodDuplicatesResolverTest extends WC_Unit_Test_Case {
 	 * @testdox Should never mutate an express duplicate submitted to the regular resolver.
 	 */
 	public function test_express_duplicate_is_not_mutated(): void {
-		// Apple Pay / Google Pay overlap is reported by the baseline as an express duplicate. It is a
+		// An Apple Pay overlap is reported by the baseline as an express duplicate. Express is a
 		// separate bucket, so it is never part of the regular resolvable set and never validated as
 		// express — it simply cannot be resolved here and nothing is mutated.
 		$this->register_fake_gateways(
 			array(
 				'applepay_button' => 'yes',
-				'foo_google_pay'  => 'yes',
+				'foo_applepay'    => 'yes',
 			)
 		);
 
-		$report = ( new PaymentMethodDuplicatesResolver() )->resolve( array( 'apple_pay_google_pay' => 'applepay_button' ) );
+		$report = ( new PaymentMethodDuplicatesResolver() )->resolve( array( 'apple_pay' => 'applepay_button' ) );
 
 		$this->assertFalse( $report['success'], 'Express input must not report success.' );
 		$this->assertSame( 'not_resolvable', $report['results'][0]['error'], 'It is not part of the regular resolvable set.' );
 		$this->assertSame( 'yes', $this->gateway( 'applepay_button' )->enabled, 'No express gateway is mutated.' );
-		$this->assertSame( 'yes', $this->gateway( 'foo_google_pay' )->enabled, 'No express gateway is mutated.' );
+		$this->assertSame( 'yes', $this->gateway( 'foo_applepay' )->enabled, 'No express gateway is mutated.' );
 	}
 
 	/**
@@ -511,7 +516,274 @@ class PaymentMethodDuplicatesResolverTest extends WC_Unit_Test_Case {
 	}
 
 	/**
-	 * A resolver subclass with a fixed detection result and grouped-providers representation.
+	 * @testdox Should turn off express methods that depend on a gateway before disabling that gateway.
+	 */
+	public function test_dependent_express_methods_are_disabled_first(): void {
+		$order = array();
+
+		$this->contribute_definitions(
+			array(
+				'card' => array(
+					'keywords' => array( 'card' ),
+					'express'  => false,
+				),
+			)
+		);
+		$this->register_fake_gateways(
+			array(
+				'keep_card'    => 'yes',
+				'partner_card' => 'yes',
+			)
+		);
+
+		// The partner serves its wallets off its card gateway, the way Stripe does.
+		add_filter(
+			'woocommerce_express_checkout_control_unit_providers',
+			static function () {
+				return array(
+					new class() implements ExpressControlUnitProviderInterface {
+						/**
+						 * One unit that cannot outlive the partner's card gateway.
+						 *
+						 * @return ExpressControlUnit[]
+						 */
+						public function get_control_units(): array {
+							return array(
+								new ExpressControlUnit(
+									'partner:wallets',
+									'partner',
+									'Partner',
+									array( 'partner_card' ),
+									array( ExpressControlUnit::WALLET_APPLE_PAY ),
+									true,
+									true,
+									array( 'partner_card' )
+								),
+							);
+						}
+					},
+				);
+			}
+		);
+
+		$recorder = function ( string $what ) use ( &$order ) {
+			$order[] = $what;
+		};
+
+		add_filter(
+			'woocommerce_express_checkout_control_unit_disablers',
+			static function () use ( $recorder ) {
+				return array(
+					new class( $recorder ) implements ExpressControlUnitDisablerInterface {
+						/**
+						 * Records the call order.
+						 *
+						 * @var callable
+						 */
+						private $recorder;
+
+						/**
+						 * Constructor.
+						 *
+						 * @param callable $recorder Records the call order.
+						 */
+						public function __construct( callable $recorder ) {
+							$this->recorder = $recorder;
+						}
+
+						/**
+						 * Claims the partner unit.
+						 *
+						 * @param string $control_unit_id The unit id.
+						 *
+						 * @return bool
+						 */
+						public function supports( string $control_unit_id ): bool {
+							return 'partner:wallets' === $control_unit_id;
+						}
+
+						/**
+						 * Records and succeeds.
+						 *
+						 * @param string $control_unit_id The unit id.
+						 *
+						 * @return array
+						 */
+						public function disable( string $control_unit_id ): array {
+							( $this->recorder )( 'express:' . $control_unit_id );
+
+							return array( 'status' => 'disabled' );
+						}
+					},
+				);
+			}
+		);
+
+		add_filter(
+			'woocommerce_payment_method_duplicate_resolvers',
+			static function ( $resolvers ) use ( $recorder ) {
+				$resolvers[] = new class( $recorder ) implements PaymentMethodDuplicateResolverInterface {
+					/**
+					 * Records the call order.
+					 *
+					 * @var callable
+					 */
+					private $recorder;
+
+					/**
+					 * Constructor.
+					 *
+					 * @param callable $recorder Records the call order.
+					 */
+					public function __construct( callable $recorder ) {
+						$this->recorder = $recorder;
+					}
+
+					/**
+					 * Claims the partner card gateway.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return bool
+					 */
+					public function supports( string $gateway_id ): bool {
+						return 'partner_card' === $gateway_id;
+					}
+
+					/**
+					 * It is disableable.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return bool
+					 */
+					public function can_disable( string $gateway_id ): bool {
+						return $this->supports( $gateway_id );
+					}
+
+					/**
+					 * Records the order and really disables it.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return array
+					 */
+					public function disable( string $gateway_id ): array {
+						( $this->recorder )( 'gateway:' . $gateway_id );
+
+						$gateway = WC()->payment_gateways()->payment_gateways()[ $gateway_id ] ?? null;
+
+						if ( $gateway ) {
+							$gateway->update_option( 'enabled', 'no' );
+							$gateway->enabled = 'no';
+						}
+
+						return array( 'status' => 'disabled' );
+					}
+				};
+
+				return $resolvers;
+			}
+		);
+
+		$report = ( new PaymentMethodDuplicatesResolver() )->resolve( array( 'card' => 'keep_card' ) );
+
+		$this->assertTrue( $report['success'], 'The resolution should succeed.' );
+		$this->assertSame(
+			array( 'express:partner:wallets', 'gateway:partner_card' ),
+			$order,
+			'The dependent express method has to go before the gateway it depends on, or the provider rejects the change.'
+		);
+		$this->assertSame(
+			'disabled',
+			$report['results'][0]['expressDisabled'][0]['status'],
+			'The knock-on disable is reported, not silent.'
+		);
+		$this->assertSame( 'Partner', $report['results'][0]['expressDisabled'][0]['providerLabel'] );
+	}
+
+	/**
+	 * @testdox Should report a disable that did not take effect, whatever the resolver claimed.
+	 */
+	public function test_resolver_claiming_success_without_effect_is_reported(): void {
+		$this->contribute_definitions(
+			array(
+				'klarna' => array(
+					'keywords' => array( 'klarna' ),
+					'express'  => false,
+				),
+			)
+		);
+		$this->register_fake_gateways(
+			array(
+				'foo_klarna' => 'yes',
+				'bar_klarna' => 'yes',
+			)
+		);
+
+		// A provider whose settings write silently no-ops — a remote configuration that was never
+		// reached, for instance — but which still reports success.
+		add_filter(
+			'woocommerce_payment_method_duplicate_resolvers',
+			static function ( $resolvers ) {
+				$resolvers[] = new class() implements PaymentMethodDuplicateResolverInterface {
+					/**
+					 * Claims the non-kept gateway.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return bool
+					 */
+					public function supports( string $gateway_id ): bool {
+						return 'bar_klarna' === $gateway_id;
+					}
+
+					/**
+					 * It reports itself as disableable.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return bool
+					 */
+					public function can_disable( string $gateway_id ): bool {
+						return $this->supports( $gateway_id );
+					}
+
+					/**
+					 * Reports success without changing anything.
+					 *
+					 * @param string $gateway_id The gateway id.
+					 *
+					 * @return array
+					 */
+					public function disable( string $gateway_id ): array {
+						unset( $gateway_id );
+
+						return array( 'status' => 'disabled' );
+					}
+				};
+
+				return $resolvers;
+			}
+		);
+
+		$report = ( new PaymentMethodDuplicatesResolver() )->resolve( array( 'klarna' => 'foo_klarna' ) );
+
+		$this->assertFalse( $report['success'], 'A disable that did not happen is not a success.' );
+		$this->assertSame(
+			'not_applied',
+			$report['results'][0]['disabled'][0]['status'],
+			'Detection, not the resolver, has the last word on whether the method is still enabled.'
+		);
+		$this->assertSame( 'yes', $this->gateway( 'bar_klarna' )->enabled, 'And it really is still enabled.' );
+	}
+
+	/**
+	 * A resolver subclass with a stubbed detection result and grouped-providers representation.
+	 *
+	 * Detection is stubbed for the *inputs* the resolver validates against, but it re-filters by the
+	 * gateways' live enabled flags on every call. The resolver verifies its results against a fresh
+	 * detection afterwards, so a stub frozen in time would report every disable as not applied.
 	 *
 	 * @param array $detected The detection result the resolver should see.
 	 * @param array $grouped  The grouped-providers representation the resolver should see.
@@ -541,6 +813,8 @@ class PaymentMethodDuplicatesResolverTest extends WC_Unit_Test_Case {
 			 * @param array $grouped  The grouped-providers representation.
 			 */
 			public function __construct( array $detected, array $grouped ) {
+				parent::__construct();
+
 				$this->detected_stub = $detected;
 				$this->grouped_stub  = $grouped;
 			}
@@ -551,7 +825,32 @@ class PaymentMethodDuplicatesResolverTest extends WC_Unit_Test_Case {
 			 * @return array
 			 */
 			protected function detect(): array {
-				return $this->detected_stub;
+				$detected = $this->detected_stub;
+				$gateways = WC()->payment_gateways()->payment_gateways();
+
+				foreach ( $detected as $kind => $groups ) {
+					foreach ( $groups as $canonical_id => $gateway_ids ) {
+						$still_enabled = array_values(
+							array_filter(
+								$gateway_ids,
+								static function ( $gateway_id ) use ( $gateways ) {
+									$gateway = $gateways[ $gateway_id ] ?? null;
+
+									return $gateway && filter_var( $gateway->enabled, FILTER_VALIDATE_BOOLEAN );
+								}
+							)
+						);
+
+						if ( count( $still_enabled ) >= 2 ) {
+							$detected[ $kind ][ $canonical_id ] = $still_enabled;
+							continue;
+						}
+
+						unset( $detected[ $kind ][ $canonical_id ] );
+					}
+				}
+
+				return $detected;
 			}
 
 			/**

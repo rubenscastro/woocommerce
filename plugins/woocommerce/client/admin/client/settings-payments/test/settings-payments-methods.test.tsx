@@ -370,7 +370,7 @@ describe( 'SettingsPaymentsMethods', () => {
 		spikeSettings = {
 			duplicates: {
 				express: {
-					apple_pay_google_pay: [ 'woocommerce_payments', 'stripe' ],
+					apple_pay: [ 'woocommerce_payments_apple_pay', 'stripe' ],
 				},
 			},
 		};
@@ -388,13 +388,16 @@ describe( 'buildExpressDuplicatesLine', () => {
 		expect( buildExpressDuplicatesLine( {} ) ).toBeNull();
 	} );
 
-	it( 'summarises the combined Apple Pay / Google Pay bucket with its gateways', () => {
+	it( 'summarises a wallet duplicate with its gateways', () => {
 		expect(
 			buildExpressDuplicatesLine( {
-				apple_pay_google_pay: [ 'woocommerce_payments', 'stripe' ],
+				apple_pay: [
+					'woocommerce_payments_apple_pay',
+					'ppcp-applepay',
+				],
 			} )
 		).toBe(
-			'Express checkout duplicates: Apple Pay / Google Pay — woocommerce_payments, stripe'
+			'Express checkout duplicates: Apple Pay — woocommerce_payments_apple_pay, ppcp-applepay'
 		);
 	} );
 

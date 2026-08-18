@@ -3,6 +3,7 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Internal\Admin\Settings;
 
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressDuplicatesResolver;
 use Automattic\WooCommerce\Internal\Admin\Settings\PaymentsProviders\WooPayments\WooPaymentsService;
 use Automattic\WooCommerce\Internal\Admin\Suggestions\PaymentsExtensionSuggestions as ExtensionSuggestions;
 use Automattic\WooCommerce\Internal\Logging\SafeGlobalFunctionProxy;
@@ -383,6 +384,31 @@ class Payments {
 			array(
 				'selections' => implode( ', ', array_keys( $selections ) ),
 				'success'    => $report['success'] ? 'yes' : 'no',
+			)
+		);
+
+		return $report;
+	}
+
+	/**
+	 * Resolve duplicated express checkout methods.
+	 *
+	 * @param array<string, string> $selections            Chosen control unit id keyed by canonical
+	 *        express method id.
+	 * @param string[]|null         $expected_lost_methods The express methods the caller was shown as
+	 *        being disabled by this change, when it stated them.
+	 *
+	 * @return array The resolution report.
+	 */
+	public function resolve_express_method_duplicates( array $selections, ?array $expected_lost_methods = null ): array {
+		$report = ( new ExpressDuplicatesResolver() )->resolve( $selections, $expected_lost_methods );
+
+		$this->record_event(
+			'express_method_duplicates_resolved',
+			array(
+				'selections' => implode( ', ', array_keys( $selections ) ),
+				'success'    => $report['success'] ? 'yes' : 'no',
+				'error'      => (string) ( $report['error'] ?? '' ),
 			)
 		);
 

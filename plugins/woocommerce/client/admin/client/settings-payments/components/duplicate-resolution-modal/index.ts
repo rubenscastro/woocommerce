@@ -2,7 +2,6 @@ export { DuplicateResolutionModal } from './duplicate-resolution-modal';
 export {
 	DuplicateResolutionEntry,
 	buildDuplicateResolutionRows,
-	buildExpressItems,
 } from './duplicate-resolution-entry';
 export type {
 	DuplicateResolutionRow,
@@ -10,4 +9,8 @@ export type {
 	DuplicateProviders,
 	DuplicateProvidersCandidate,
 	DuplicateGroups,
+	ExpressControlUnit,
+	ExpressDuplicateGroup,
+	ExpressDuplicates,
+	ExpressProviderOption,
 } from './types';

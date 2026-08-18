@@ -14,18 +14,10 @@ import type {
 	DuplicateGroups,
 	DuplicateProviders,
 	DuplicateResolutionRow,
+	ExpressControlUnit,
+	ExpressDuplicates,
 } from './types';
 import './duplicate-resolution-entry.scss';
-
-/**
- * Human-readable labels for the canonical express methods the detector can report.
- *
- * The detector currently cannot tell Apple Pay and Google Pay apart — both signals collapse into one
- * `apple_pay_google_pay` bucket — so the label preserves that combined identity.
- */
-const EXPRESS_METHOD_LABELS: Record< string, string > = {
-	apple_pay_google_pay: 'Apple Pay / Google Pay',
-};
 
 /**
  * The slice of the `blocksPaymentMethodsSpike` payload the duplicate flow reads.
@@ -37,6 +29,9 @@ const EXPRESS_METHOD_LABELS: Record< string, string > = {
 type DuplicateSpikeSettings = {
 	duplicates?: DuplicateGroups;
 	duplicateProviders?: DuplicateProviders;
+	expressDuplicates?: ExpressDuplicates;
+	expressControlUnits?: ExpressControlUnit[];
+	expressWalletLabels?: Record< string, string >;
 };
 
 /**
@@ -71,15 +66,6 @@ export const buildDuplicateResolutionRows = (
 				( a.requiredKeepGatewayId ? 1 : 0 )
 		);
 
-/**
- * Build the prepared, non-mutating express (Step 2) items from the detected express duplicates.
- */
-export const buildExpressItems = ( express: Record< string, string[] > = {} ) =>
-	Object.entries( express ).map( ( [ canonicalId, gatewayIds ] ) => ( {
-		label: EXPRESS_METHOD_LABELS[ canonicalId ] ?? canonicalId,
-		gatewayIds,
-	} ) );
-
 interface DuplicateResolutionEntryProps {
 	/**
 	 * Optional class for the notice wrapper, so each page can inset the banner to match its list.
@@ -97,16 +83,16 @@ interface DuplicateResolutionEntryProps {
 export const DuplicateResolutionEntry = ( {
 	wrapperClassName,
 }: DuplicateResolutionEntryProps ) => {
-	const { duplicates = {}, duplicateProviders = {} } =
-		getSetting< DuplicateSpikeSettings >( 'blocksPaymentMethodsSpike', {} );
+	const {
+		duplicateProviders = {},
+		expressDuplicates = [],
+		expressControlUnits = [],
+		expressWalletLabels = {},
+	} = getSetting< DuplicateSpikeSettings >( 'blocksPaymentMethodsSpike', {} );
 
 	const rows = useMemo(
 		() => buildDuplicateResolutionRows( duplicateProviders ),
 		[ duplicateProviders ]
-	);
-	const expressItems = useMemo(
-		() => buildExpressItems( duplicates.express ),
-		[ duplicates ]
 	);
 
 	const [ isModalOpen, setIsModalOpen ] = useState( false );
@@ -151,7 +137,9 @@ export const DuplicateResolutionEntry = ( {
 			{ isModalOpen && (
 				<DuplicateResolutionModal
 					rows={ rows }
-					expressItems={ expressItems }
+					expressGroups={ expressDuplicates }
+					expressControlUnits={ expressControlUnits }
+					expressWalletLabels={ expressWalletLabels }
 					onClose={ () => setIsModalOpen( false ) }
 				/>
 			) }

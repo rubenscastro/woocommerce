@@ -3,6 +3,7 @@ declare( strict_types=1 );
 
 namespace Automattic\WooCommerce\Internal\Admin\Settings;
 
+use Automattic\WooCommerce\Internal\Admin\Settings\Express\ExpressControlUnits;
 use Throwable;
 use WC_Payment_Gateway;
 
@@ -18,11 +19,16 @@ defined( 'ABSPATH' ) || exit;
  * collision is reported regardless of which providers are involved.
  *
  * The knowledge of *which* canonical methods exist and *which* gateway ids belong to them is not
- * owned here. Core seeds only the two universal cases the WooPayments detector hardcodes — the
- * `card` keyword set and the combined `apple_pay_google_pay` wallet keyword set — verbatim.
+ * owned here. Core seeds only the universal cases the WooPayments detector hardcodes — the `card`
+ * keyword set, and the wallet keyword sets split into one canonical method per wallet.
  * Everything else (Klarna, iDEAL, Afterpay…) is contributed by extensions through two filters, so
  * an extension such as WooPayments remains the single source of truth for its own metadata and core
  * takes no dependency on it.
+ *
+ * Express wallets differ from regular methods in how implementations are counted. A provider can
+ * surface one wallet through several enabled gateway ids at once, so counting ids reports a single
+ * provider as a duplicate of itself. Wallets are therefore counted per control unit — see
+ * {@see self::keep_express_duplicates_only()} and {@see Express\ExpressControlUnit}.
  *
  * Discovery (which methods the page lists) is a separate concern handled elsewhere; this service
  * only produces the duplicate metadata that annotates methods already discovered.
@@ -30,6 +36,23 @@ defined( 'ABSPATH' ) || exit;
  * @internal
  */
 class PaymentMethodDuplicatesDetector {
+
+	/**
+	 * The express control units, used to count wallet implementations per controllable unit.
+	 *
+	 * @var ExpressControlUnits
+	 */
+	private ExpressControlUnits $control_units;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param ExpressControlUnits|null $control_units Express control units collector. Defaults to a
+	 *        new instance, so the detector stays directly instantiable.
+	 */
+	public function __construct( ?ExpressControlUnits $control_units = null ) {
+		$this->control_units = $control_units ?? new ExpressControlUnits();
+	}
 
 	/**
 	 * Detect duplicate payment methods across the enabled payment gateways.
@@ -59,9 +82,13 @@ class PaymentMethodDuplicatesDetector {
 
 			$groups = $this->match_by_keywords( $enabled_gateways, $definitions );
 			$groups = $this->merge_gateway_hints( $groups, $enabled_gateways, $definitions );
-			$groups = $this->keep_duplicates_only( $groups );
 
-			return $this->split_by_kind( $groups, $definitions );
+			$split = $this->split_by_kind( $groups, $definitions );
+
+			return array(
+				'payment_methods' => $this->keep_duplicates_only( $split['payment_methods'] ),
+				'express'         => $this->keep_express_duplicates_only( $split['express'] ),
+			);
 		} catch ( Throwable $e ) {
 			// Detection is advisory metadata; never let a misbehaving gateway or extension take down
 			// the settings page. Mirrors the fail-silent behaviour of the WooPayments detector.
@@ -72,21 +99,32 @@ class PaymentMethodDuplicatesDetector {
 	/**
 	 * The canonical payment-method definitions to match gateways against.
 	 *
-	 * Core contributes a baseline for the two special cases the WooPayments detector hardcodes:
-	 * cards and the combined Apple Pay / Google Pay wallet bucket. The keyword sets are a verbatim
-	 * lift of that detector's `search_for_cc()` and `search_for_payment_request_buttons()` keywords —
-	 * this is not a new or broader canonicalisation. Extensions add the remaining methods.
+	 * Core contributes a baseline for the special cases the WooPayments detector hardcodes: cards
+	 * and the wallets. The card keyword set is a verbatim lift of that detector's `search_for_cc()`
+	 * keywords — this is not a new or broader canonicalisation. Extensions add the remaining
+	 * methods.
+	 *
+	 * The wallet keywords are the same set that detector uses in `search_for_payment_request_buttons()`,
+	 * but split into one canonical method per wallet instead of a single combined bucket. Wallet
+	 * identity is independent of how a provider happens to control its wallets: the merchant chooses
+	 * a provider for Apple Pay specifically, so Apple Pay must be its own canonical method even
+	 * though a provider such as WooPayments controls both of its wallets with one flag. That
+	 * coupling is described by {@see Express\ExpressControlUnit}, not by merging the methods.
 	 *
 	 * @return array<string, array{keywords: string[], express: bool}> Keyed by canonical method id.
 	 */
 	private function get_definitions(): array {
 		$baseline = array(
-			'card'                 => array(
+			'card'       => array(
 				'keywords' => array( 'credit_card', 'creditcard', 'cc', 'card' ),
 				'express'  => false,
 			),
-			'apple_pay_google_pay' => array(
-				'keywords' => array( 'apple_pay', 'applepay', 'google_pay', 'googlepay' ),
+			'apple_pay'  => array(
+				'keywords' => array( 'apple_pay', 'applepay' ),
+				'express'  => true,
+			),
+			'google_pay' => array(
+				'keywords' => array( 'google_pay', 'googlepay' ),
 				'express'  => true,
 			),
 		);
@@ -285,6 +323,44 @@ class PaymentMethodDuplicatesDetector {
 			$gateway_ids = array_values( array_unique( $gateway_ids ) );
 
 			if ( count( $gateway_ids ) >= 2 ) {
+				$duplicates[ $canonical_id ] = $gateway_ids;
+			}
+		}
+
+		return $duplicates;
+	}
+
+	/**
+	 * Drop express wallets that resolve to fewer than two independently controllable implementations.
+	 *
+	 * Counting gateway ids — what {@see self::keep_duplicates_only()} does for regular methods — is
+	 * wrong for wallets, because one provider can surface a single wallet through several enabled
+	 * gateway ids at once: its per-wallet split gateways plus its master gateway, the latter pulled
+	 * in by a hint when the provider toggles express through a gateway option. Counting ids reports
+	 * that one provider as a duplicate of itself, and the merchant is asked to resolve a conflict
+	 * that does not exist.
+	 *
+	 * Implementations are therefore counted per control unit — the thing that can actually be turned
+	 * off — so every gateway belonging to the same unit counts once. Gateways no unit claims count
+	 * individually, so providers without an adapter behave exactly as before.
+	 *
+	 * @param array<string, string[]> $groups Gateway ids keyed by canonical wallet id.
+	 *
+	 * @return array<string, string[]>
+	 */
+	private function keep_express_duplicates_only( array $groups ): array {
+		$duplicates = array();
+
+		foreach ( $groups as $canonical_id => $gateway_ids ) {
+			$gateway_ids = array_values( array_unique( $gateway_ids ) );
+
+			$owner_keys = array();
+
+			foreach ( $gateway_ids as $gateway_id ) {
+				$owner_keys[] = $this->control_units->get_owner_key( (string) $gateway_id );
+			}
+
+			if ( count( array_unique( $owner_keys ) ) >= 2 ) {
 				$duplicates[ $canonical_id ] = $gateway_ids;
 			}
 		}

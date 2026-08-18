@@ -6,10 +6,7 @@ import { render } from '@testing-library/react';
 /**
  * Internal dependencies
  */
-import {
-	buildDuplicateResolutionRows,
-	buildExpressItems,
-} from '../duplicate-resolution-entry';
+import { buildDuplicateResolutionRows } from '../duplicate-resolution-entry';
 import type { DuplicateProviders } from '../types';
 
 describe( 'buildDuplicateResolutionRows', () => {
@@ -75,24 +72,5 @@ describe( 'buildDuplicateResolutionRows', () => {
 				'.duplicate-resolution-modal__row-placeholder'
 			)
 		).toBeInTheDocument();
-	} );
-} );
-
-describe( 'buildExpressItems', () => {
-	it( 'maps express duplicates to labelled items, combining Apple Pay / Google Pay', () => {
-		expect(
-			buildExpressItems( {
-				apple_pay_google_pay: [ 'applepay', 'googlepay' ],
-			} )
-		).toEqual( [
-			{
-				label: 'Apple Pay / Google Pay',
-				gatewayIds: [ 'applepay', 'googlepay' ],
-			},
-		] );
-	} );
-
-	it( 'returns nothing when there are no express duplicates', () => {
-		expect( buildExpressItems() ).toEqual( [] );
 	} );
 } );

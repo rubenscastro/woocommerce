@@ -4,6 +4,7 @@
 import {
 	Card as WPCard,
 	CardBody,
+	Notice,
 	SelectControl,
 	ToggleControl,
 } from '@wordpress/components';
@@ -12,7 +13,8 @@ import { __, sprintf } from '@wordpress/i18n';
 /**
  * Internal dependencies
  */
-import type { DuplicateResolutionRow } from './types';
+import { calculatePrerequisiteImpact } from './express-impact';
+import type { DuplicateResolutionRow, ExpressControlUnit } from './types';
 
 interface StepRegularProps {
 	/**
@@ -27,7 +29,32 @@ interface StepRegularProps {
 	 * Record a provider choice for a canonical method. An empty gateway id clears the choice.
 	 */
 	onSelect: ( canonicalId: string, gatewayId: string ) => void;
+	/**
+	 * The express control-unit graph, used to warn when keeping one provider for a regular method
+	 * would take another provider's express methods down with it.
+	 */
+	controlUnits?: ExpressControlUnit[];
+	/**
+	 * Readable labels for express methods.
+	 */
+	walletLabels?: Record< string, string >;
 }
+
+/**
+ * Join names into a readable list.
+ */
+const joinNames = ( names: string[] ): string => {
+	if ( names.length < 2 ) {
+		return names[ 0 ] ?? '';
+	}
+
+	return sprintf(
+		/* translators: 1: all names except the last, comma separated. 2: the last name. */
+		__( '%1$s and %2$s', 'woocommerce' ),
+		names.slice( 0, -1 ).join( ', ' ),
+		names[ names.length - 1 ]
+	);
+};
 
 /**
  * The method's readable name. Row labels are React nodes, but for the server-built rows they are the
@@ -55,6 +82,8 @@ export const StepRegular = ( {
 	rows,
 	selections,
 	onSelect,
+	controlUnits = [],
+	walletLabels = {},
 }: StepRegularProps ) => (
 	<div className="duplicate-resolution-modal__list">
 		{ rows.map( ( row ) => {
@@ -64,6 +93,36 @@ export const StepRegular = ( {
 			// A required-keep method (e.g. Card) is a single primary decision, so it is set apart in
 			// its own card container with an opt-in toggle rather than a row with a select.
 			if ( requiredKeep ) {
+				const isOn = selections[ row.canonicalId ] === requiredKeep;
+
+				// Turning this on disables every other provider's implementation of this method —
+				// and a provider that serves its express methods off the back of it loses those too.
+				const toDisable = isOn
+					? row.options
+							.filter(
+								( option ) => option.gatewayId !== requiredKeep
+							)
+							.map( ( option ) => option.gatewayId )
+					: [];
+				const knockOn = calculatePrerequisiteImpact(
+					controlUnits,
+					toDisable
+				);
+				const affectedNames = [
+					...knockOn.lostMethods,
+					...knockOn.survivingMethods,
+				].map( ( walletId ) => walletLabels[ walletId ] ?? walletId );
+
+				// Counted by provider, not by unit: one provider can own several units, and losing
+				// two of PayPal's units is still only PayPal.
+				const affectedProviders = [
+					...new Set(
+						knockOn.brokenUnits.map(
+							( unit ) => unit.providerLabel
+						)
+					),
+				];
+
 				return (
 					<WPCard
 						key={ row.canonicalId }
@@ -77,22 +136,22 @@ export const StepRegular = ( {
 								label={ sprintf(
 									/* translators: 1: provider name, 2: payment method name. */
 									__(
-										'Use %1$s as the default %2$s provider',
+										'Make %1$s the default %2$s provider',
 										'woocommerce'
 									),
 									providerLabelOf( row, requiredKeep ),
 									method
 								) }
 								help={ sprintf(
-									/* translators: 1: payment method name, 2: number of providers, 3: provider name, 4: payment method name (lower case). */
+									/* translators: 1: payment method name, 2: number of providers, 3: provider name, 4: payment method name. */
 									__(
-										'%1$s payments are offered by %2$d providers. Use %3$s as the primary option and hide duplicate %4$s payment methods from other providers.',
+										'%1$s payments are currently available through %2$d providers. Make %3$s the primary option and hide duplicate %4$s payment methods from other providers.',
 										'woocommerce'
 									),
 									method,
 									row.options.length,
 									providerLabelOf( row, requiredKeep ),
-									method.toLowerCase()
+									method
 								) }
 								checked={
 									selections[ row.canonicalId ] ===
@@ -105,6 +164,52 @@ export const StepRegular = ( {
 									)
 								}
 							/>
+
+							{ knockOn.brokenUnits.length > 0 && (
+								<Notice
+									className="duplicate-resolution-modal__prerequisite"
+									status="warning"
+									isDismissible={ false }
+								>
+									<strong>
+										{ affectedProviders.length === 1
+											? sprintf(
+													/* translators: 1: express method names, 2: the provider losing them. */
+													__(
+														'%1$s will also be disabled for %2$s',
+														'woocommerce'
+													),
+													joinNames( affectedNames ),
+													affectedProviders[ 0 ]
+											  )
+											: sprintf(
+													/* translators: %s: express method names. Used when several providers are affected, so they are not all listed. */
+													__(
+														'%s will also be disabled for other providers',
+														'woocommerce'
+													),
+													joinNames( affectedNames )
+											  ) }
+									</strong>
+									<p>
+										{ knockOn.survivingMethods.length > 0
+											? sprintf(
+													/* translators: %s: the providers still offering these express methods. */
+													__(
+														'These payment methods will remain available through %s.',
+														'woocommerce'
+													),
+													joinNames(
+														knockOn.survivingVia
+													)
+											  )
+											: __(
+													'These payment methods will no longer be available at checkout.',
+													'woocommerce'
+											  ) }
+									</p>
+								</Notice>
+							) }
 						</CardBody>
 					</WPCard>
 				);

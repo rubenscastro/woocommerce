@@ -167,6 +167,34 @@ class PaymentsRestController extends RestApiControllerBase {
 		);
 		register_rest_route(
 			$this->route_namespace,
+			'/' . $this->rest_base . '/express-methods/duplicates/resolve',
+			array(
+				array(
+					'methods'             => \WP_REST_Server::EDITABLE,
+					'callback'            => fn( $request ) => $this->run( $request, 'resolve_express_method_duplicates' ),
+					'permission_callback' => fn( $request ) => $this->check_permissions( $request ),
+					'args'                => array(
+						'selections'            => array(
+							'description'          => esc_html__( 'A map of canonical express method ID to the control unit ID that should provide it; control units providing it for other providers are disabled.', 'woocommerce' ),
+							'type'                 => 'object',
+							'required'             => true,
+							'additionalProperties' => array( 'type' => 'string' ),
+							'validate_callback'    => fn( $value ) => $this->check_duplicate_selections_arg( $value ),
+							'sanitize_callback'    => fn( $value ) => $this->sanitize_express_selections_arg( $value ),
+						),
+						'expected_lost_methods' => array(
+							'description' => esc_html__( 'The express methods the merchant was shown as being disabled by this change. When it no longer matches, the request is refused as out of date.', 'woocommerce' ),
+							'type'        => 'array',
+							'required'    => false,
+							'items'       => array( 'type' => 'string' ),
+						),
+					),
+				),
+			),
+			$override
+		);
+		register_rest_route(
+			$this->route_namespace,
 			'/' . $this->rest_base . '/suggestion/(?P<id>[\w\d\-]+)/attach',
 			array(
 				array(
@@ -342,6 +370,29 @@ class PaymentsRestController extends RestApiControllerBase {
 		$selections = (array) $request->get_param( 'selections' );
 
 		$report = $this->payments->resolve_payment_method_duplicates( $selections );
+
+		return rest_ensure_response( $report );
+	}
+
+	/**
+	 * Resolve duplicated express checkout methods.
+	 *
+	 * Separate from the regular resolution route on purpose: the selections mean different things
+	 * (a control unit rather than a gateway), the outcome can legitimately disable methods the
+	 * merchant did not select, and the regular flow's behaviour must be left exactly as it is.
+	 *
+	 * @param WP_REST_Request<array<string, mixed>> $request The request object.
+	 *
+	 * @return WP_Error|WP_REST_Response
+	 */
+	protected function resolve_express_method_duplicates( WP_REST_Request $request ) { // phpcs:ignore Squiz.Commenting.FunctionComment.IncorrectTypeHint
+		$selections = (array) $request->get_param( 'selections' );
+		$expected   = $request->get_param( 'expected_lost_methods' );
+
+		$report = $this->payments->resolve_express_method_duplicates(
+			$selections,
+			null === $expected ? null : array_map( 'strval', (array) $expected )
+		);
 
 		return rest_ensure_response( $report );
 	}
@@ -638,6 +689,56 @@ class PaymentsRestController extends RestApiControllerBase {
 		}
 
 		return $sanitized;
+	}
+
+	/**
+	 * Sanitize the express duplicate-resolution selections argument.
+	 *
+	 * Values here are control unit ids, not gateway ids, and those are namespaced by provider with a
+	 * colon (`woopayments:wallets`). {@see self::sanitize_provider_id()} strips the colon, which would
+	 * silently turn a valid unit id into one that matches nothing, so the separator is preserved here.
+	 *
+	 * @param mixed $value Value of the argument.
+	 *
+	 * @return array<string, string> The sanitized wallet id => control unit id map.
+	 */
+	private function sanitize_express_selections_arg( $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array();
+		}
+
+		$sanitized = array();
+		foreach ( $value as $wallet_id => $control_unit_id ) {
+			if ( ! is_string( $wallet_id ) || ! is_string( $control_unit_id ) ) {
+				continue;
+			}
+
+			$wallet_id       = $this->sanitize_provider_id( $wallet_id );
+			$control_unit_id = $this->sanitize_control_unit_id( $control_unit_id );
+
+			if ( '' === $wallet_id || '' === $control_unit_id ) {
+				continue;
+			}
+
+			$sanitized[ $wallet_id ] = $control_unit_id;
+		}
+
+		return $sanitized;
+	}
+
+	/**
+	 * Reduce a control unit id to a safe string, keeping the provider namespace separator.
+	 *
+	 * @param string $control_unit_id The control unit id.
+	 *
+	 * @return string
+	 */
+	private function sanitize_control_unit_id( string $control_unit_id ): string {
+		$control_unit_id = wp_strip_all_tags( $control_unit_id );
+		$control_unit_id = remove_accents( $control_unit_id );
+
+		// Only ASCII letters, digits, underscores, dashes, and the namespace colon are allowed.
+		return (string) preg_replace( '|[^a-z0-9_\-:]|i', '', $control_unit_id );
 	}
 
 	/**
