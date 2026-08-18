@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Disable express checkout methods that depend on a payment method before disabling that method, so providers that reject or silently break such a change are handled correctly, and report a disable that did not take effect instead of assuming it worked.

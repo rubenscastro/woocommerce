@@ -1,0 +1,4 @@
+Significance: patch
+Type: fix
+
+Detect duplicate express checkout methods per wallet and count implementations per provider control unit, so a single provider that surfaces a wallet through several gateways is no longer reported as a duplicate of itself.

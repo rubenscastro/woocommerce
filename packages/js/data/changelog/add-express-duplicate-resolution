@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Add `resolveExpressMethodDuplicates` action and its report types for resolving duplicate express checkout methods.

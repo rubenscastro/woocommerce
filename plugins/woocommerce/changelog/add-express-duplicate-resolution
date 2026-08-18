@@ -1,0 +1,4 @@
+Significance: minor
+Type: add
+
+Let merchants choose which provider offers each duplicated express checkout method, previewing what a choice disables before applying it.
