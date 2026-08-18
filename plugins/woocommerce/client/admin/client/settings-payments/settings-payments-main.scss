@@ -80,6 +80,17 @@ $payments-header-row-height: 38px;
 			}
 		}
 
+		// When the duplicate notice follows the header, the notice closes the section off with its
+		// own bottom border, so the header drawing one too stacks a second line directly above the
+		// banner. Conditional rather than removed outright: the notice renders nothing when there
+		// are no duplicates or once it is dismissed, and the header still has to close itself off
+		// in those states.
+		// The inner class is written out rather than using `&`, which would expand to the whole
+		// ancestor chain inside `:has()` and quietly match nothing.
+		&__header:has(+ .settings-payment-gateways__duplicate-notice) {
+			border-bottom: none;
+		}
+
 		&__header-title {
 			display: flex;
 			align-items: center;
